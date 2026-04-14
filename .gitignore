@@ -8,7 +8,7 @@ hs_err_pid*
 # sbt specific
 .cache
 .history
-target/
+build/
 project/target/
 project/project/
 .scala_dependencies

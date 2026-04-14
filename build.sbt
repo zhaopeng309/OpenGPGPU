@@ -7,8 +7,9 @@ val chiselVersion = "6.2.0"
 lazy val root = (project in file("."))
   .settings(
     name := "OpenGPGPU-Memory-Model",
+    target := baseDirectory.value / "build" / "target",
     Compile / scalaSource := baseDirectory.value / "src",
-    Test / scalaSource := baseDirectory.value / "test",
+    Test / scalaSource := baseDirectory.value / "tests",
     Compile / unmanagedSourceDirectories += baseDirectory.value / "utils",
     libraryDependencies ++= Seq(
       "org.chipsalliance" %% "chisel" % chiselVersion,
