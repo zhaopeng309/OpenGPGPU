@@ -33,3 +33,4 @@ test_run_dir/
 # Documentation and Planning (Excluded from GitHub as requested)
 arch/
 plan/
+resource/
