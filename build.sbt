@@ -10,6 +10,7 @@ lazy val root = (project in file("."))
     target := baseDirectory.value / "build" / "target",
     Compile / scalaSource := baseDirectory.value / "src",
     Test / scalaSource := baseDirectory.value / "tests",
+    Test / unmanagedSourceDirectories += baseDirectory.value / "sim",
     Compile / unmanagedSourceDirectories += baseDirectory.value / "utils",
     libraryDependencies ++= Seq(
       "org.chipsalliance" %% "chisel" % chiselVersion,
