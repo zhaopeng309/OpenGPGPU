@@ -34,3 +34,6 @@ test_run_dir/
 arch/
 plan/
 resource/
+
+# Tests
+tests/
