@@ -130,6 +130,8 @@ class CollectorUnit(implicit config: CollectorConfig) extends Module {
   io.issueBundle.hasSrc2 := hasSrc2
   io.issueBundle.hasSrc3 := hasSrc3
   io.issueBundle.cuId := io.cuId
+  io.issueBundle.activeMask := "hFFFFFFFF".U
+  io.issueBundle.predMask := "hFFFFFFFF".U
   
   // Deallocate logic
   when(io.dealloc) {
