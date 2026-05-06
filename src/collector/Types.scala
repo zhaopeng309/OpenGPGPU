@@ -30,6 +30,8 @@ class OperandBundle(implicit config: CollectorConfig) extends Bundle {
   val hasSrc1 = Bool()
   val hasSrc2 = Bool()
   val hasSrc3 = Bool()
+  val activeMask = UInt(config.threadPerWarp.W)
+  val predMask = UInt(config.threadPerWarp.W)
   val cuId = UInt(log2Ceil(config.numCUs).W)
 }
 
