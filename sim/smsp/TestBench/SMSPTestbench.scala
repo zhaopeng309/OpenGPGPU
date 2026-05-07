@@ -1,4 +1,4 @@
-package sim
+package sim.smsp.TestBench
 
 import chisel3._
 import chisel3.util._
@@ -7,19 +7,30 @@ import org.scalatest.flatspec.AnyFlatSpec
 import utils.Logger
 import isa.Registry
 import isa.LDC_64
+import sim.smsp.{SMSPConfig, SMSPTop}
 
-class SimTestbench extends AnyFlatSpec with ChiselScalatestTester {
-  behavior of "System Simulation"
+import isa.SASS_Instruction
+
+class ADD_Inst extends SASS_Instruction("ADD") {
+  op(59, 52, "00000000") // Opcode 0x00 for vALU ADD (matches Types.scala vALUOpcode)
+}
+
+class SMSPTestbench extends AnyFlatSpec with ChiselScalatestTester {
+  behavior of "SMSP System Simulation"
 
   it should "run cycle-accurate simulation and print logs" in {
     // 仅当开启了日志配置时才执行，或者无论如何执行但配置决定是否打印
-    SimConfig.initLogger()
+    SMSPConfig.initLogger()
 
     // 注册指令以便 Decoder 正常工作
     Registry.clear()
     Registry.register(new LDC_64)
+    Registry.register(new ADD_Inst)
 
-    test(new SimTop).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+    test(new SMSPTop).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      // Set a longer timeout
+      dut.clock.setTimeout(200)
+
       // 初始化输入
       dut.io.warp_init_valid.poke(false.B)
       dut.io.warp_init_id.poke(0.U)
@@ -40,13 +51,16 @@ class SimTestbench extends AnyFlatSpec with ChiselScalatestTester {
       dut.io.warp_init_valid.poke(false.B)
 
       // 构造一条指令数据
-      val ldc64_opcode = BigInt("0C", 16)
-      val ldc64_mod   = BigInt("40", 16)
-      val inst1_val = (ldc64_opcode << 52) | (ldc64_mod << 40)
+      // Let's use vALU ADD instead of LDC, as vALU is integrated.
+      // Opcode for ADD is 0. 
+      // FADD is 0x1E, IMAD is 0x24. Wait, Decoder uses Registry to match.
+      // Let's register a basic ADD instruction in the testbench.
+      val add_opcode = BigInt("00", 16) // vALU ADD
+      val inst1_val = (add_opcode << 52) | (BigInt(3) << 32) | (BigInt(1) << 24) | (BigInt(2) << 16) // Rd=3, Rs1=1, Rs2=2
       val fillData = inst1_val // 放在 0x1000 对应的 word0
 
-      // 运行 30 个时钟周期
-      for (cycle <- 1 to 30) {
+      // 运行 100 个时钟周期
+      for (cycle <- 1 to 100) {
         // 在第三个周期提供 Cache Fill 响应
         if (cycle == 3) {
           dut.io.roc_icache_fill_valid.poke(true.B)
@@ -56,15 +70,28 @@ class SimTestbench extends AnyFlatSpec with ChiselScalatestTester {
           dut.io.roc_icache_fill_valid.poke(false.B)
         }
 
-        // 记录状态并打印
-        logCycle(dut, cycle)
+    // 记录状态并打印
+    val wsDisp = dut.io.ws_dispatch_valid.peek().litToBoolean
+    if (wsDisp) {
+      Logger.info("TEST", s"Instruction dispatched to OC")
+    }
+    
+    val sbRelease = dut.io.sb_release_req.peek().litToBoolean
+    if (sbRelease) {
+      Logger.info("TEST", s"Scoreboard release requested (Execution Complete)")
+    }
+    
+    logCycle(dut, cycle)
         dut.clock.step(1)
       }
     }
   }
 
-  def logCycle(dut: SimTop, cycle: Int): Unit = {
-    if (!SimConfig.enableSimLog) return
+  def logCycle(dut: SMSPTop, cycle: Int): Unit = {
+    if (!SMSPConfig.enableSimLog) return
+
+    // 更新仿真时间（纳秒）= cycle × 时钟周期
+    SMSPConfig.currentSimTimeNs = (cycle * SMSPConfig.clockPeriodNs).toLong
 
     Logger.info("SIM", s"================ Cycle $cycle ================")
 

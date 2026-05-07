@@ -11,7 +11,7 @@ clean:
 compile:
 	sbt compile
 
-# 运行所有测试
+# 运行所有的单元和集成测试（开发者内部通路）
 test:
 	sbt test
 
@@ -19,9 +19,9 @@ test:
 test-memory:
 	sbt "testOnly *memory*"
 
-# 运行仿真（包含周期级别的日志输出）
+# 运行仿真（面向用户的通路）
 sim:
-	sbt "testOnly sim.SimTestbench"
+	$(MAKE) -C sim smsp
 
 # 生成 Scaladoc 文档
 doc:

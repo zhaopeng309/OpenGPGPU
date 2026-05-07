@@ -1,4 +1,4 @@
-package sim
+package sim.smsp
 
 import chisel3._
 import chisel3.util._
@@ -11,8 +11,10 @@ import l0kcache.L0KCache
 import scheduler.{WarpScheduler, Scoreboard}
 import opengpgpu.collector.{OperandCollector, CollectorConfig}
 import opengpgpu.register.{vGPR_Top, pGPR, uGPR, RegisterFileConfig}
+import opengpgpu.valu.vALU
+import opengpgpu.RCB.{RCB, RCBConfig}
 
-class SimTop extends Module {
+class SMSPTop extends Module {
   // 定义所有的探针(Probe)接口，将子模块的状态暴露出来供 Testbench 捕获
   val io = IO(new Bundle {
     // === 测试激励输入 ===
@@ -85,12 +87,22 @@ class SimTop extends Module {
   implicit val collConfig: CollectorConfig = CollectorConfig()
   val collector = Module(new OperandCollector)
   
-  val rfConfig = RegisterFileConfig()
-  val vgpr = Module(new vGPR_Top(rfConfig))
-  val pgpr = Module(new pGPR(rfConfig))
-  val ugpr = Module(new uGPR(rfConfig))
+    val rfConfig = RegisterFileConfig()
+    val vgpr = Module(new vGPR_Top(rfConfig))
+    val pgpr = Module(new pGPR(rfConfig))
+    val ugpr = Module(new uGPR(rfConfig))
+  
+    val valu = Module(new vALU())
+    implicit val rcbConfig: RCBConfig = RCBConfig(
+      numWarps = 8,
+      numEntries = 12,
+      numBanks = 4,
+      threadPerWarp = 32,
+      vGPRWidth = 32
+    )
+    val rcb = Module(new RCB())
 
-  // ==========================================
+    // ==========================================
   // 连接逻辑
   // ==========================================
   
@@ -174,12 +186,14 @@ class SimTop extends Module {
   scoreboard.io.alloc_warp_id := scheduler.io.dispatch.bits.warpId
   scoreboard.io.alloc_reg_id := scheduler.io.dispatch.bits.microOp.rd
   
-  scoreboard.io.release_req := false.B // Driven by mock vALU normally
-  scoreboard.io.release_warp_id := 0.U
-  scoreboard.io.release_reg_id := 0.U
+  // Scoreboard release connected from RCB
+  scoreboard.io.release_req := rcb.io.o_bar_rel.valid
+  scoreboard.io.release_warp_id := rcb.io.o_bar_rel.bits.warp_id
+  scoreboard.io.release_reg_id := rcb.io.o_bar_rel.bits.rd_index
   
-  scheduler.io.releaseReq.valid := false.B
-  scheduler.io.releaseReq.bits := DontCare
+  scheduler.io.releaseReq.valid := rcb.io.o_bar_rel.valid
+  scheduler.io.releaseReq.bits.warpId := rcb.io.o_bar_rel.bits.warp_id
+  scheduler.io.releaseReq.bits.regId := rcb.io.o_bar_rel.bits.rd_index
 
   // Scheduler <-> Operand Collector
   collector.io.dispatch <> scheduler.io.dispatch
@@ -194,9 +208,28 @@ class SimTop extends Module {
     collector.io.rfReadResp(i).valid := RegNext(collector.io.rfReadReq(i).valid)
     collector.io.rfReadResp(i).bits.data := vgpr.io.readData(i)
 
-    vgpr.io.writeReqs(i).valid := false.B
-    vgpr.io.writeReqs(i).bits := DontCare
+    vgpr.io.writeReqs(i).valid := rcb.io.o_bk_write(i).valid
+    vgpr.io.writeReqs(i).bits.wid := rcb.io.o_bk_write(i).bits.wid
+    vgpr.io.writeReqs(i).bits.regId := rcb.io.o_bk_write(i).bits.regId
+    vgpr.io.writeReqs(i).bits.data := rcb.io.o_bk_write(i).bits.data
+    vgpr.io.writeReqs(i).bits.mask := rcb.io.o_bk_write(i).bits.mask.asBools
+    
+    rcb.io.o_bk_write(i).ready := true.B // Assume VGPR is always ready for writes in SMSPTop
   }
+  
+  // Operand Collector <-> vALU
+  valu.io.in <> collector.io.issue
+  
+  // vALU <-> RCB
+  rcb.io.i_valu_res <> valu.io.out
+  
+  // RCB unused inputs
+  rcb.io.i_lsu_res.valid := false.B
+  rcb.io.i_lsu_res.bits := DontCare
+  rcb.io.i_a2v_res.valid := false.B
+  rcb.io.i_a2v_res.bits := DontCare
+  rcb.io.bypass_query.valid := false.B
+  rcb.io.bypass_query.bits := DontCare
   
   // external Cache fills
   icache.io.roc_resp.fill_valid := io.roc_icache_fill_valid

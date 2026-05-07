@@ -11,9 +11,11 @@
 │                    sim/ 仿真目录结构                          │
 │                                                             │
 │  sim/                                                       │
-│   ├── SimConfig.scala       ← 仿真配置（日志开关/输出目标）    │
-│   ├── SimTop.scala          ← 顶层模块（集成所有子模块）      │
-│   └── SimTestbench.scala    ← 测试平台（每个时钟周期打印日志） │
+│   └── smsp/                                                 │
+│       ├── SMSPConfig.scala       ← 仿真配置（日志开关/输出目标）    │
+│       ├── SMSPTop.scala          ← 顶层模块（集成所有子模块）      │
+│       └── TestBench/             ← 仿真测试平台                 │
+│           └── SMSPTestbench.scala    ← 测试平台（每个时钟周期打印日志） │
 │                                                             │
 │  utils/                                                     │
 │   └── Logger.scala          ← 已有日志工具（保持不变）        │
@@ -26,14 +28,14 @@
 
 - **不使用 Chisel `printf`**：因为 `printf` 在 RTL 综合时也会生成硬件逻辑，影响运行速度
 - **在 Scala Testbench 中通过 `peek()` 读取硬件信号**：每个时钟周期结束后，Testbench 读取各个模块的 IO 引脚状态，调用 `Logger` 打印
-- **运行模式不输出**：SimTestbench 只在 `sim` 目录下存在，`sbt test` 不会编译 sim 目录
+- **运行模式不输出**：SMSPTestbench 只在 `sim` 目录下存在，`sbt test` 不会编译 sim 目录
 
-### 2. SimConfig 配置对象
+### 2. SMSPConfig 配置对象
 
 ```scala
-package sim
+package sim.smsp
 
-object SimConfig {
+object SMSPConfig {
   // 日志输出目标: "console" | "file"
   var logTarget: String = "console"
   
@@ -48,13 +50,13 @@ object SimConfig {
 }
 ```
 
-### 3. SimTop 顶层模块
+### 3. SMSPTop 顶层模块
 
-SimTop 将集成所有子模块（IFU、Decoder、IBuffer、WarpScheduler、OperandCollector、L0ICache、L0KCache、RegisterFile 等），并暴露所有内部模块的 IO 信号到顶层，供 Testbench 读取。
+SMSPTop 将集成所有子模块（IFU、Decoder、IBuffer、WarpScheduler、OperandCollector、L0ICache、L0KCache、RegisterFile 等），并暴露所有内部模块的 IO 信号到顶层，供 TestBench 读取。
 
-**关键设计**：SimTop 不添加任何额外的硬件逻辑，仅做模块例化和信号连线。所有内部模块的 IO 都通过 `SimTop` 的 IO 暴露出去。
+**关键设计**：SMSPTop 不添加任何额外的硬件逻辑，仅做模块例化和信号连线。所有内部模块的 IO 都通过 `SMSPTop` 的 IO 暴露出去。
 
-### 4. SimTestbench 日志内容
+### 4. SMSPTestbench 日志内容
 
 每个时钟周期打印以下信息：
 
@@ -76,25 +78,28 @@ SimTop 将集成所有子模块（IFU、Decoder、IBuffer、WarpScheduler、Oper
 
 ```
 sim/
-├── SimConfig.scala       # 仿真配置
-├── SimTop.scala          # 顶层模块
-└── SimTestbench.scala    # 测试平台
+├── Makefile              # 仿真层级 Makefile
+└── smsp/                 # SMSP 仿真层级
+    ├── SMSPConfig.scala       # 仿真配置
+    ├── SMSPTop.scala          # 顶层模块
+    └── TestBench/             # 仿真测试平台
+        └── SMSPTestbench.scala    # 测试平台
 ```
 
-### Step 2: 实现 SimConfig.scala
+### Step 2: 实现 SMSPConfig.scala
 
-- 定义 `SimConfig` 单例对象
+- 定义 `SMSPConfig` 单例对象
 - 包含 `logTarget`（console/file）、`logFile`、`logLevel`、`enabled` 等配置项
 - 提供 `init()` 方法初始化 Logger
 
-### Step 3: 实现 SimTop.scala
+### Step 3: 实现 SMSPTop.scala
 
-- 创建 `SimTop` 顶层 Chisel Module
+- 创建 `SMSPTop` 顶层 Chisel Module
 - 例化所有子模块：IFU, Decoder, IBuffer, WarpScheduler, OperandCollector, L0ICache, L0KCache, vGPR_Top, pGPR, uGPR, MemoryController
-- 将所有子模块的 IO 信号连接到 SimTop 的 IO 端口
+- 将所有子模块的 IO 信号连接到 SMSPTop 的 IO 端口
 - 添加必要的测试激励输入端口（warp_init, pop, memory_fill 等）
 
-### Step 4: 实现 SimTestbench.scala
+### Step 4: 实现 SMSPTestbench.scala
 
 - 使用 `chiseltest` 框架
 - 在每个时钟周期：
@@ -102,7 +107,7 @@ sim/
   2. `clock.step(1)` 前进一个时钟周期
   3. 使用 `peek()` 读取所有模块的 IO 信号
   4. 调用 `Logger` 打印每个模块的状态
-- 支持通过 `SimConfig` 控制输出目标
+- 支持通过 `SMSPConfig` 控制输出目标
 
 ### Step 5: 更新 build.sbt
 
@@ -130,7 +135,7 @@ sim/
 
 ## 注意事项
 
-1. **性能**：SimTestbench 仅在仿真时使用，不影响综合后的运行速度
-2. **可配置性**：通过 SimConfig 可以控制日志级别和输出目标
-3. **可扩展性**：新增模块时，只需在 SimTop 中例化并添加对应的日志打印逻辑
+1. **性能**：SMSPTestbench 仅在仿真时使用，不影响综合后的运行速度
+2. **可配置性**：通过 SMSPConfig 可以控制日志级别和输出目标
+3. **可扩展性**：新增模块时，只需在 SMSPTop 中例化并添加对应的日志打印逻辑
 4. **与现有测试兼容**：现有的 `tests/` 目录下的单元测试不受影响

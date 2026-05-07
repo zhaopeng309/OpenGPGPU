@@ -123,9 +123,12 @@ class vALU(implicit config: CollectorConfig) extends Module {
     
     ex4_out_valid := isBeat3
     when (isBeat3) {
-      outPacket.wid := ex3_op.wid
-      outPacket.rd := ex3_op.rd
-      outPacket.write_mask := ex3_op.activeMask & ex3_op.predMask
+      outPacket.warp_id     := ex3_op.wid        // OperandBundle 仍使用 wid
+      outPacket.rd_index    := ex3_op.rd          // OperandBundle 仍使用 rd
+      outPacket.write_mask  := ex3_op.activeMask & ex3_op.predMask
+      outPacket.barrier_id  := 0.U                // Phase 1: 暂不支持屏障同步
+      outPacket.source_type := 0.U                // Phase 1: 固定为 vALU
+      outPacket.dest_type   := 0.U                // Phase 1: 固定为 vGPR
       // Reassemble
       for (b <- 0 until 3) {
         for (i <- 0 until numPEs) {
