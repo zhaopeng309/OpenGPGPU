@@ -26,7 +26,7 @@ class MicroOp extends Bundle {
   val waitKAck = Bool()
 }
 
-class EarlyProbeReq extends Bundle {
+class ConstantProbeReq extends Bundle {
   val warpId = UInt(6.W)
   val addr = UInt(32.W)
 }
@@ -45,7 +45,7 @@ class DecoderIO extends Bundle {
   
   // Output
   val microOpOut = Output(new MicroOp())
-  val earlyProbeReq = Decoupled(new EarlyProbeReq())
+  val constantProbeReq = Decoupled(new ConstantProbeReq())
   val branchRedirect = Output(new BranchRedirect())
   
   // Exceptions

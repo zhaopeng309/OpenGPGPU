@@ -10,7 +10,7 @@
 
 ## ⚠️ 当前开发状态
 
-> **更新：** SMSP（Streaming Multiprocessor Subsystem）内部流水线已基本贯通。IFU（取指）→ Decoder（译码）→ IBuffer（指令缓冲）→ WarpScheduler（线程束调度）→ OperandCollector（操作数收集）→ vALU（向量运算）→ RCB（结果提交缓冲）→ vGPR（向量寄存器堆）的**完整数据通路已连通**，顶层 [`SMSPTop`](sim/smsp/SMSPTop.scala) 已集成所有核心模块并支持系统级仿真。
+> **更新：** SMSP（Streaming Multiprocessor Subsystem）内部流水线已基本贯通。IFU（取指）→ Decoder（译码）→ IBuffer（指令缓冲）→ WarpScheduler（线程束调度）→ OperandCollector（操作数收集）→ vALU（向量运算）→ RCB（结果提交缓冲）→ vGPR（向量寄存器堆）的**完整数据通路已连通**，顶层 [`SMSPTop`](sim/smsp/SMSPTop.scala) 已集成所有核心模块并支持流处理器子系统级仿真。
 
 当前已实现以下关键模块的快速建模与集成测试：
 

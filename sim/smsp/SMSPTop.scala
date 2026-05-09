@@ -144,11 +144,11 @@ class SMSPTop extends Module {
   decoder.io.warpIdIn := ifu.io.decoder_out.warp_id
   decoder.io.pcIn := 0.U
   
-  // Decoder <-> L0KCache
-  decoder.io.earlyProbeReq.ready := true.B
-  kcache.io.probe_req.valid := decoder.io.earlyProbeReq.valid
-  kcache.io.probe_req.static_addr := decoder.io.earlyProbeReq.bits.addr
-  kcache.io.probe_req.warp_id := decoder.io.earlyProbeReq.bits.warpId
+  // Decoder <-> L0KCache (K-Sniffer: 常量地址提前探针)
+  decoder.io.constantProbeReq.ready := true.B
+  kcache.io.probe_req.valid := decoder.io.constantProbeReq.valid
+  kcache.io.probe_req.static_addr := decoder.io.constantProbeReq.bits.addr
+  kcache.io.probe_req.warp_id := decoder.io.constantProbeReq.bits.warpId
   
   kcache.io.oc_read.valid := false.B
   kcache.io.oc_read.dynamic_addr := 0.U
@@ -190,7 +190,11 @@ class SMSPTop extends Module {
   scoreboard.io.release_req := rcb.io.o_bar_rel.valid
   scoreboard.io.release_warp_id := rcb.io.o_bar_rel.bits.warp_id
   scoreboard.io.release_reg_id := rcb.io.o_bar_rel.bits.rd_index
-  
+
+  // Feature 3.2: TID 释放端口 (暂时禁用，使用传统 release 路径)
+  scoreboard.io.release_tid := 0.U
+  scoreboard.io.release_tid_valid := false.B
+
   scheduler.io.releaseReq.valid := rcb.io.o_bar_rel.valid
   scheduler.io.releaseReq.bits.warpId := rcb.io.o_bar_rel.bits.warp_id
   scheduler.io.releaseReq.bits.regId := rcb.io.o_bar_rel.bits.rd_index

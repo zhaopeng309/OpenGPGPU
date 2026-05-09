@@ -40,6 +40,14 @@ class Scoreboard(val numWarps: Int = 8, val numSlots: Int = 6) extends Module {
 
     // Slot Full mask (one bit per warp)
     val slot_full_mask = Output(UInt(numWarps.W))
+
+    // ── Feature 3.2: TID 释放机制 ──
+    // TID = {Warp_ID[2:0], Slot_ID[2:0]} (6-bit Transaction ID)
+    // 用于精准定位释放哪个 slot
+    val release_tid = Input(UInt(6.W))       // TID 释放请求
+    val release_tid_valid = Input(Bool())    // TID 释放有效
+    val alloc_tid = Output(UInt(6.W))        // 分配的 TID (用于回传)
+    val alloc_tid_valid = Output(Bool())     // TID 分配有效
   })
 
   // ──────────────────────────────────────────────
@@ -171,4 +179,71 @@ class Scoreboard(val numWarps: Int = 8, val numSlots: Int = 6) extends Module {
     fullMask(w) := (0 until numSlots).map(s => slotValid(w)(s)).reduce(_ && _)
   }
   io.slot_full_mask := fullMask.asUInt
+
+  // ──────────────────────────────────────────────
+  // Feature 3.2: TID 释放机制
+  // TID = {Warp_ID[2:0], Slot_ID[2:0]}
+  // ──────────────────────────────────────────────
+
+  // TID 分配: 在 alloc 时记录分配的 slot index
+  val allocSlotIdx = Wire(UInt(log2Ceil(numSlots).W))
+  val allocTidValid = Wire(Bool())
+
+  when(io.alloc_req) {
+    val wId = io.alloc_warp_id
+    val rId = io.alloc_reg_id
+
+    when(rId =/= 0.U) {
+      val slotHit = Wire(Vec(numSlots, Bool()))
+      for (s <- 0 until numSlots) {
+        slotHit(s) := slotValid(wId)(s) && slotRegId(wId)(s) === rId
+      }
+      val anyHit = slotHit.reduce(_ || _)
+      val hitIdx = PriorityEncoder(slotHit)
+
+      when(anyHit) {
+        // 重用已有 slot, TID = {Warp_ID[2:0], hitIdx[2:0]}
+        allocSlotIdx := hitIdx
+        allocTidValid := true.B
+      }.otherwise {
+        val freeSlotIdx = PriorityEncoder(VecInit(slotValid(wId).map(v => !v)))
+        when(freeSlotIdx < numSlots.U) {
+          allocSlotIdx := freeSlotIdx
+          allocTidValid := true.B
+        }.otherwise {
+          allocSlotIdx := 0.U
+          allocTidValid := false.B
+        }
+      }
+    }.otherwise {
+      allocSlotIdx := 0.U
+      allocTidValid := false.B
+    }
+  }.otherwise {
+    allocSlotIdx := 0.U
+    allocTidValid := false.B
+  }
+
+  // TID = {Warp_ID[2:0], Slot_ID[2:0]}
+  io.alloc_tid := Cat(io.alloc_warp_id(log2Ceil(numWarps) - 1, 0), allocSlotIdx(log2Ceil(numSlots) - 1, 0))
+  io.alloc_tid_valid := allocTidValid && io.alloc_req
+
+  // TID 释放: 从 TID 中提取 Warp_ID 和 Slot_ID
+  when(io.release_tid_valid) {
+    val tidWarpId = io.release_tid(5, 3)  // TID[5:3] = Warp_ID
+    val tidSlotId = io.release_tid(2, 0)  // TID[2:0] = Slot_ID
+
+    when(tidWarpId < numWarps.U && tidSlotId < numSlots.U) {
+      val slotEntry = slotValid(tidWarpId)(tidSlotId)
+      when(slotEntry) {
+        when(slotPending(tidWarpId)(tidSlotId) <= 1.U) {
+          slotValid(tidWarpId)(tidSlotId) := false.B
+          slotRegId(tidWarpId)(tidSlotId) := 0.U
+          slotPending(tidWarpId)(tidSlotId) := 0.U
+        }.otherwise {
+          slotPending(tidWarpId)(tidSlotId) := slotPending(tidWarpId)(tidSlotId) - 1.U
+        }
+      }
+    }
+  }
 }

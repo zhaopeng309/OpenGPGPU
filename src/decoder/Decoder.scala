@@ -11,8 +11,8 @@ class Decoder extends Module {
   io.microOpOut := 0.U.asTypeOf(new MicroOp())
   io.microOpOut.valid := false.B
 
-  io.earlyProbeReq.valid := false.B
-  io.earlyProbeReq.bits := 0.U.asTypeOf(new EarlyProbeReq())
+  io.constantProbeReq.valid := false.B
+  io.constantProbeReq.bits := 0.U.asTypeOf(new ConstantProbeReq())
 
   io.branchRedirect.valid := false.B
   io.branchRedirect.targetPc := 0.U
@@ -45,13 +45,13 @@ class Decoder extends Module {
         if (inst.getFields.contains("OT")) io.microOpOut.ot := inst.ot.extract(io.instIn)
         if (inst.getFields.contains("Imm32")) io.microOpOut.imm := inst.imm32.extract(io.instIn)
         
-        // Phase 3 Features
+        // Phase 3 Features - K-Sniffer: 常量地址提前探针
         if (inst.hasConstantSnoop) {
           val isStatic = inst.isStaticSnoop(io.instIn)
           when(isStatic) {
-            io.earlyProbeReq.valid := true.B
-            io.earlyProbeReq.bits.warpId := io.warpIdIn
-            io.earlyProbeReq.bits.addr := inst.imm32.extract(io.instIn)
+            io.constantProbeReq.valid := true.B
+            io.constantProbeReq.bits.warpId := io.warpIdIn
+            io.constantProbeReq.bits.addr := inst.imm32.extract(io.instIn)
             io.microOpOut.waitKAck := true.B
           } .otherwise {
             io.microOpOut.waitKAck := false.B
