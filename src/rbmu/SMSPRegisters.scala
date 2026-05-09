@@ -189,10 +189,11 @@ class SMSPRegisters(targetID: Int) extends Module {
   // 直接写入寄存器 (无影子)
   when(io.rb.wr_valid) {
     switch(io.rb.wr_offset) {
-      is(0x004.U) { ifu_ctrl_reg := io.rb.wr_data }
+      is(0x004.U) { ifu_ctrl_reg := io.rb.wr_data(31, 0) }
       is(0x020.U) { warp_init_pc_reg := io.rb.wr_data(47, 0) }
-      is(0x030.U) { vgpr_warp_offset_reg := io.rb.wr_data }
-      is(0x040.U) { kernel_ctx_reg := io.rb.wr_data }
+      is(0x024.U) { warp_init_pc_reg := Cat(io.rb.wr_data(15, 0), warp_init_pc_reg(31, 0)) }  // 高 16 位写入
+      is(0x030.U) { vgpr_warp_offset_reg := io.rb.wr_data(31, 0) }
+      is(0x040.U) { kernel_ctx_reg := io.rb.wr_data(31, 0) }
       is(0x204.U) { l0i_prefetch_reg := io.rb.wr_data(7, 0) }
       is(0x208.U) { l0k_prefetch_reg := io.rb.wr_data(7, 0) }
     }
@@ -242,24 +243,24 @@ class SMSPRegisters(targetID: Int) extends Module {
   // ==========================================
   // 读取逻辑 (组合逻辑)
   // ==========================================
-  io.rb.rd_data := 0.U
+  io.rb.rd_data := 0.U(64.W)
   when(io.rb.rd_valid) {
     switch(io.rb.rd_offset) {
       // --- 控制与状态寄存器 ---
-      is(0x000.U) { io.rb.rd_data := smsp_status }
-      is(0x004.U) { io.rb.rd_data := ifu_ctrl_reg }
-      is(0x008.U) { io.rb.rd_data := smsp_ifu_status }
-      is(0x010.U) { io.rb.rd_data := ib_credit_reg }
-      is(0x020.U) { io.rb.rd_data := warp_init_pc_reg(31, 0) }
-      is(0x024.U) { io.rb.rd_data := Cat(0.U(16.W), warp_init_pc_reg(47, 32)) }
-      is(0x030.U) { io.rb.rd_data := vgpr_warp_offset_reg }
-      is(0x040.U) { io.rb.rd_data := kernel_ctx_reg }
+      is(0x000.U) { io.rb.rd_data := Cat(0.U(32.W), smsp_status) }
+      is(0x004.U) { io.rb.rd_data := Cat(0.U(32.W), ifu_ctrl_reg) }
+      is(0x008.U) { io.rb.rd_data := Cat(0.U(32.W), smsp_ifu_status) }
+      is(0x010.U) { io.rb.rd_data := Cat(0.U(32.W), ib_credit_reg) }
+      is(0x020.U) { io.rb.rd_data := Cat(0.U(16.W), warp_init_pc_reg) }  // 48-bit PC 对齐到 64-bit
+      is(0x024.U) { io.rb.rd_data := Cat(0.U(48.W), warp_init_pc_reg(47, 32)) }  // 高 16 位
+      is(0x030.U) { io.rb.rd_data := Cat(0.U(32.W), vgpr_warp_offset_reg) }
+      is(0x040.U) { io.rb.rd_data := Cat(0.U(32.W), kernel_ctx_reg) }
 
       // --- PST 表状态寄存器 ---
-      is(0x080.U) { io.rb.rd_data := pst_valid_reg }
-      is(0x084.U) { io.rb.rd_data := Cat(0.U(8.W), pst_state_reg) }
-      is(0x088.U) { io.rb.rd_data := Cat(0.U(8.W), pst_credits_reg) }
-      is(0x08C.U) { io.rb.rd_data := Cat(0.U(16.W), pst_flush_tag_reg) }
+      is(0x080.U) { io.rb.rd_data := Cat(0.U(56.W), pst_valid_reg) }
+      is(0x084.U) { io.rb.rd_data := Cat(0.U(40.W), pst_state_reg) }
+      is(0x088.U) { io.rb.rd_data := Cat(0.U(40.W), pst_credits_reg) }
+      is(0x08C.U) { io.rb.rd_data := Cat(0.U(48.W), pst_flush_tag_reg) }
       is(0x090.U) {
         // Warp[0:3] inst_id 低 32 位打包
         io.rb.rd_data := Cat(
@@ -280,32 +281,32 @@ class SMSPRegisters(targetID: Int) extends Module {
       }
 
       // --- Warp PC (Debug) ---
-      is(0x100.U) { io.rb.rd_data := warp_pc_regs(0)(31, 0) }
-      is(0x104.U) { io.rb.rd_data := warp_pc_regs(0)(47, 32) }
-      is(0x108.U) { io.rb.rd_data := warp_pc_regs(1)(31, 0) }
-      is(0x10C.U) { io.rb.rd_data := warp_pc_regs(1)(47, 32) }
-      is(0x110.U) { io.rb.rd_data := warp_pc_regs(2)(31, 0) }
-      is(0x114.U) { io.rb.rd_data := warp_pc_regs(2)(47, 32) }
-      is(0x118.U) { io.rb.rd_data := warp_pc_regs(3)(31, 0) }
-      is(0x11C.U) { io.rb.rd_data := warp_pc_regs(3)(47, 32) }
-      is(0x120.U) { io.rb.rd_data := warp_pc_regs(4)(31, 0) }
-      is(0x124.U) { io.rb.rd_data := warp_pc_regs(4)(47, 32) }
-      is(0x128.U) { io.rb.rd_data := warp_pc_regs(5)(31, 0) }
-      is(0x12C.U) { io.rb.rd_data := warp_pc_regs(5)(47, 32) }
-      is(0x130.U) { io.rb.rd_data := warp_pc_regs(6)(31, 0) }
-      is(0x134.U) { io.rb.rd_data := warp_pc_regs(6)(47, 32) }
-      is(0x138.U) { io.rb.rd_data := warp_pc_regs(7)(31, 0) }
-      is(0x13C.U) { io.rb.rd_data := warp_pc_regs(7)(47, 32) }
+      is(0x100.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(0)(31, 0)) }
+      is(0x104.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(0)(47, 32)) }
+      is(0x108.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(1)(31, 0)) }
+      is(0x10C.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(1)(47, 32)) }
+      is(0x110.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(2)(31, 0)) }
+      is(0x114.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(2)(47, 32)) }
+      is(0x118.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(3)(31, 0)) }
+      is(0x11C.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(3)(47, 32)) }
+      is(0x120.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(4)(31, 0)) }
+      is(0x124.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(4)(47, 32)) }
+      is(0x128.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(5)(31, 0)) }
+      is(0x12C.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(5)(47, 32)) }
+      is(0x130.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(6)(31, 0)) }
+      is(0x134.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(6)(47, 32)) }
+      is(0x138.U) { io.rb.rd_data := Cat(0.U(32.W), warp_pc_regs(7)(31, 0)) }
+      is(0x13C.U) { io.rb.rd_data := Cat(0.U(48.W), warp_pc_regs(7)(47, 32)) }
 
       // --- L0I/K 缓存策略 ---
-      is(0x200.U) { io.rb.rd_data := Cat(0.U(31.W), k_probe_en_reg) }
-      is(0x204.U) { io.rb.rd_data := Cat(0.U(24.W), l0i_prefetch_reg) }
-      is(0x208.U) { io.rb.rd_data := Cat(0.U(24.W), l0k_prefetch_reg) }
+      is(0x200.U) { io.rb.rd_data := Cat(0.U(63.W), k_probe_en_reg) }
+      is(0x204.U) { io.rb.rd_data := Cat(0.U(56.W), l0i_prefetch_reg) }
+      is(0x208.U) { io.rb.rd_data := Cat(0.U(56.W), l0k_prefetch_reg) }
 
       // --- 寄存器文件基址 ---
-      is(0x300.U) { io.rb.rd_data := gpr_base_reg }
-      is(0x304.U) { io.rb.rd_data := ugpr_base_reg }
-      is(0x308.U) { io.rb.rd_data := pgpr_base_reg }
+      is(0x300.U) { io.rb.rd_data := Cat(0.U(32.W), gpr_base_reg) }
+      is(0x304.U) { io.rb.rd_data := Cat(0.U(32.W), ugpr_base_reg) }
+      is(0x308.U) { io.rb.rd_data := Cat(0.U(32.W), pgpr_base_reg) }
     }
   }
 

@@ -91,18 +91,18 @@ class LSURegisters extends Module {
   // ==========================================
   // 读取逻辑 (组合逻辑)
   // ==========================================
-  io.rb.rd_data := 0.U
+  io.rb.rd_data := 0.U(64.W)
   when(io.rb.rd_valid) {
     switch(io.rb.rd_offset) {
-      is(0x000.U) { io.rb.rd_data := addr_region_0_reg(31, 0) }
-      is(0x004.U) { io.rb.rd_data := Cat(0.U(8.W), addr_region_0_reg(55, 32)) }
-      is(0x008.U) { io.rb.rd_data := addr_region_1_reg(31, 0) }
-      is(0x00C.U) { io.rb.rd_data := Cat(0.U(8.W), addr_region_1_reg(55, 32)) }
-      is(0x040.U) { io.rb.rd_data := prt_config_reg }
-      is(0x100.U) { io.rb.rd_data := barrier_timeout_reg }
-      is(0x200.U) { io.rb.rd_data := pm_rd_req_cnt }
-      is(0x210.U) { io.rb.rd_data := pm_wr_req_cnt }
-      is(0x280.U) { io.rb.rd_data := pm_l1d_hit_cnt }
+      is(0x000.U) { io.rb.rd_data := Cat(0.U(32.W), addr_region_0_reg(31, 0)) }
+      is(0x004.U) { io.rb.rd_data := Cat(0.U(32.W), Cat(0.U(8.W), addr_region_0_reg(55, 32))) }
+      is(0x008.U) { io.rb.rd_data := Cat(0.U(32.W), addr_region_1_reg(31, 0)) }
+      is(0x00C.U) { io.rb.rd_data := Cat(0.U(32.W), Cat(0.U(8.W), addr_region_1_reg(55, 32))) }
+      is(0x040.U) { io.rb.rd_data := Cat(0.U(32.W), prt_config_reg) }
+      is(0x100.U) { io.rb.rd_data := Cat(0.U(32.W), barrier_timeout_reg) }
+      is(0x200.U) { io.rb.rd_data := Cat(0.U(32.W), pm_rd_req_cnt) }
+      is(0x210.U) { io.rb.rd_data := Cat(0.U(32.W), pm_wr_req_cnt) }
+      is(0x280.U) { io.rb.rd_data := Cat(0.U(32.W), pm_l1d_hit_cnt) }
     }
   }
 

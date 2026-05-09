@@ -69,19 +69,19 @@ class GMMURegisters extends Module {
   // ==========================================
   // 读取逻辑 (组合逻辑)
   // ==========================================
-  io.rb.rd_data := 0.U
+  io.rb.rd_data := 0.U(64.W)
   when(io.rb.rd_valid) {
     switch(io.rb.rd_offset) {
-      is(0x000.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(0)) }
-      is(0x004.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(1)) }
-      is(0x008.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(2)) }
-      is(0x00C.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(3)) }
-      is(0x010.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(4)) }
-      is(0x014.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(5)) }
-      is(0x018.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(6)) }
-      is(0x01C.U) { io.rb.rd_data := Cat(0.U(12.W), vmid_pasid_map_reg(7)) }
-      is(0x100.U) { io.rb.rd_data := ptw_root_ptr_reg(31, 0) }
-      is(0x104.U) { io.rb.rd_data := ptw_root_ptr_reg(63, 32) }
+      is(0x000.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(0)) }
+      is(0x004.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(1)) }
+      is(0x008.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(2)) }
+      is(0x00C.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(3)) }
+      is(0x010.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(4)) }
+      is(0x014.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(5)) }
+      is(0x018.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(6)) }
+      is(0x01C.U) { io.rb.rd_data := Cat(0.U(44.W), vmid_pasid_map_reg(7)) }
+      is(0x100.U) { io.rb.rd_data := Cat(0.U(32.W), ptw_root_ptr_reg(31, 0)) }
+      is(0x104.U) { io.rb.rd_data := Cat(0.U(32.W), ptw_root_ptr_reg(63, 32)) }
     }
   }
 

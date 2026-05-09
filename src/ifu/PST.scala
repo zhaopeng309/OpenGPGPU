@@ -49,6 +49,8 @@ class IFU_PST extends Module {
     entry.credits := 0.U
     entry.flush_gen_tag := 0.U
     entry.inst_id := 0.U
+    entry.mode_register := 0.U
+    entry.tma_desc_base := 0.U
     entry
   }))
 

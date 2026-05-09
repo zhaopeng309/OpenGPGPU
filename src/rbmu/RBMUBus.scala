@@ -22,7 +22,7 @@ object RBMUAddr {
   val ADDR_WIDTH = 24
   val TARGET_ID_WIDTH = 4
   val OFFSET_WIDTH = 20
-  val DATA_WIDTH = 32
+  val DATA_WIDTH = 64
 
   // Target_ID 分配
   val TARGET_SM_GLOBAL   = 0x0.U(TARGET_ID_WIDTH.W)
@@ -55,7 +55,7 @@ object RBMUAddr {
  */
 class RBMURequestBus extends Bundle {
   val addr    = UInt(24.W)    // Addr[23:0]: Target_ID[23:20] + Offset[19:0]
-  val data_in = UInt(32.W)    // 写入数据 (写操作时有效)
+  val data_in = UInt(64.W)    // 写入数据 (写操作时有效)
   val wr_en   = Bool()        // 写使能
   val rd_en   = Bool()        // 读使能
   val last    = Bool()        // 是否为环路的最后一个请求 (用于环路终结)
@@ -66,7 +66,7 @@ class RBMURequestBus extends Bundle {
  * 从目标 Ring Stop 发往 Host/Testbench
  */
 class RBMUResponseBus extends Bundle {
-  val data_out = UInt(32.W)   // 读取数据 (读操作时有效)
+  val data_out = UInt(64.W)   // 读取数据 (读操作时有效)
   val valid    = Bool()       // 响应有效
   val error    = Bool()       // 错误标志 (无效地址等)
 }
@@ -95,9 +95,9 @@ class RBMURingIO extends Bundle {
  */
 class RBMUTargetInterface extends Bundle {
   // 解码后的寄存器访问
-  val rd_data  = Output(UInt(32.W))   // 读取数据 (组合逻辑)
+  val rd_data  = Output(UInt(64.W))   // 读取数据 (组合逻辑)
   val wr_valid = Input(Bool())        // 写有效
-  val wr_data  = Input(UInt(32.W))    // 写数据
+  val wr_data  = Input(UInt(64.W))    // 写数据
   val wr_offset = Input(UInt(20.W))   // 写偏移地址
   val rd_valid = Input(Bool())        // 读有效
   val rd_offset = Input(UInt(20.W))   // 读偏移地址

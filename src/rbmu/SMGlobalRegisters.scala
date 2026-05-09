@@ -84,9 +84,6 @@ class SMGlobalRegisters(smId: Int = 0) extends Module {
   // SM_ERROR_STATUS (Offset 0x040): [0] IFU 超时, [1] I-Cache ECC 错误, [2] Decoder 非法指令
   val error_status_reg = RegInit(0.U(3.W))
 
-  // SM_ERROR_CLEAR (Offset 0x050): 写入 1 清除对应位
-  val error_clear_pulse = Wire(Bool())
-
   // ==========================================
   // 写入逻辑
   // ==========================================
@@ -115,9 +112,10 @@ class SMGlobalRegisters(smId: Int = 0) extends Module {
   kernel_active_reg := io.kernel_active
 
   // 异常状态: 上升沿锁存 (一旦出错, 保持直到清除)
-  when(io.error_ifu_timeout)     { error_status_reg(0) := true.B }
-  when(io.error_icache_ecc)      { error_status_reg(1) := true.B }
-  when(io.error_decoder_illegal) { error_status_reg(2) := true.B }
+  // 使用完整寄存器赋值，避免 Chisel 不允许的 bit-select 赋值
+  when(io.error_ifu_timeout)     { error_status_reg := error_status_reg | 1.U(3.W) }
+  when(io.error_icache_ecc)      { error_status_reg := error_status_reg | 2.U(3.W) }
+  when(io.error_decoder_illegal) { error_status_reg := error_status_reg | 4.U(3.W) }
 
   // 异常标志 = 任意错误位有效
   sm_error_flag := error_status_reg.orR
@@ -125,16 +123,16 @@ class SMGlobalRegisters(smId: Int = 0) extends Module {
   // ==========================================
   // 读取逻辑 (组合逻辑)
   // ==========================================
-  io.rb.rd_data := 0.U
+  io.rb.rd_data := 0.U(64.W)
   when(io.rb.rd_valid) {
     switch(io.rb.rd_offset) {
-      is(0x000.U) { io.rb.rd_data := sm_id }
-      is(0x004.U) { io.rb.rd_data := sm_status }
-      is(0x010.U) { io.rb.rd_data := ifu_global_ctrl_reg }
-      is(0x020.U) { io.rb.rd_data := 0.U }  // WO 寄存器, 读返回 0
-      is(0x030.U) { io.rb.rd_data := Cat(0.U(31.W), kernel_active_reg) }
-      is(0x040.U) { io.rb.rd_data := Cat(0.U(29.W), error_status_reg) }
-      is(0x050.U) { io.rb.rd_data := 0.U }  // WO 寄存器, 读返回 0
+      is(0x000.U) { io.rb.rd_data := Cat(0.U(32.W), sm_id) }
+      is(0x004.U) { io.rb.rd_data := Cat(0.U(32.W), sm_status) }
+      is(0x010.U) { io.rb.rd_data := Cat(0.U(32.W), ifu_global_ctrl_reg) }
+      is(0x020.U) { io.rb.rd_data := 0.U(64.W) }  // WO 寄存器, 读返回 0
+      is(0x030.U) { io.rb.rd_data := Cat(0.U(63.W), kernel_active_reg) }
+      is(0x040.U) { io.rb.rd_data := Cat(0.U(61.W), error_status_reg) }
+      is(0x050.U) { io.rb.rd_data := 0.U(64.W) }  // WO 寄存器, 读返回 0
     }
   }
 

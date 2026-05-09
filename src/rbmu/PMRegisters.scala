@@ -54,18 +54,18 @@ class MMAPMRegisters extends Module {
   // ==========================================
   // 读取逻辑 (含 Snapshot 机制)
   // ==========================================
-  io.rb.rd_data := 0.U
+  io.rb.rd_data := 0.U(64.W)
   when(io.rb.rd_valid) {
     switch(io.rb.rd_offset) {
       is(0x400.U) {
         // 读取 LO: 自动锁定 HI 到快照寄存器
         snapshot_hi := inst_ret_counter(63, 32)
         snapshot_valid := true.B
-        io.rb.rd_data := inst_ret_counter(31, 0)
+        io.rb.rd_data := Cat(0.U(32.W), inst_ret_counter(31, 0))
       }
       is(0x404.U) {
         // 读取 HI: 从快照中取值
-        io.rb.rd_data := Mux(snapshot_valid, snapshot_hi, inst_ret_counter(63, 32))
+        io.rb.rd_data := Cat(0.U(32.W), Mux(snapshot_valid, snapshot_hi, inst_ret_counter(63, 32)))
         snapshot_valid := false.B
       }
     }
@@ -109,18 +109,18 @@ class VALUPMRegisters extends Module {
   // ==========================================
   // 读取逻辑 (含 Snapshot 机制)
   // ==========================================
-  io.rb.rd_data := 0.U
+  io.rb.rd_data := 0.U(64.W)
   when(io.rb.rd_valid) {
     switch(io.rb.rd_offset) {
       is(0x400.U) {
         // 读取 LO: 自动锁定 HI 到快照寄存器
         snapshot_hi := stall_counter(63, 32)
         snapshot_valid := true.B
-        io.rb.rd_data := stall_counter(31, 0)
+        io.rb.rd_data := Cat(0.U(32.W), stall_counter(31, 0))
       }
       is(0x404.U) {
         // 读取 HI: 从快照中取值
-        io.rb.rd_data := Mux(snapshot_valid, snapshot_hi, stall_counter(63, 32))
+        io.rb.rd_data := Cat(0.U(32.W), Mux(snapshot_valid, snapshot_hi, stall_counter(63, 32)))
         snapshot_valid := false.B
       }
     }

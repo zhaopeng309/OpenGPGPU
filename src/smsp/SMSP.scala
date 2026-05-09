@@ -33,18 +33,17 @@ case class SMSPConfig(
 // SMSP 通过此接口与 SM 全局资源通信
 // ==========================================
 class SMInterface(implicit cfg: SMSPConfig) extends Bundle {
-  // === Block Scheduler 接口 ===
+  // === Block Scheduler 接口 (Decoupled WarpInitBundle) ===
   val warp_init_valid = Input(Bool())
-  val warp_init_id = Input(UInt(log2Ceil(cfg.numWarps).W))
-  val warp_init_pc = Input(UInt(48.W))
+  val warp_init_ready = Output(Bool())
+  val warp_init_bits  = Input(new blksch.WarpInitBundle())
   val warp_exit_valid = Output(Bool())
   val warp_exit_id = Output(UInt(log2Ceil(cfg.numWarps).W))
+  val warp_exit_block_id = Output(UInt(8.W))
   val blksch_active_mask = Input(UInt(32.W))
   val blksch_bar_id = Input(UInt(4.W))
   val blksch_block_done = Output(Bool())
-  // v2.0: 新增字段，来自 Block Scheduler 的 WarpInitBundle
-  val blksch_mode_register = Input(UInt(8.W))   // 硬件特性控制寄存器
-  val blksch_tma_desc_base = Input(UInt(32.W))  // TMA 描述符表基地址
+  // v2.0: 新增字段，来自 Block Scheduler 的 WarpInitBundle (已包含在 WarpInitBundle 中)
 
   // === L0 I-Cache Fill (来自 ROC) ===
   val roc_icache_fill_valid = Input(Bool())
@@ -160,15 +159,20 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
   // 连接逻辑
   // ==========================================
 
-  // ── 1. Block Scheduler -> IFU (Warp Init) ──
+  // ── 1. Block Scheduler -> IFU (Warp Init via WarpInitBundle) ──
+  // 从 WarpInitBundle 中提取 warp_init_id 和 pc
+  val warp_init_bits = io.warp_init_bits
   ifu.io.warp_init_valid := io.warp_init_valid
-  ifu.io.warp_init_id := io.warp_init_id
-  ifu.io.warp_init_pc := io.warp_init_pc
+  ifu.io.warp_init_id := warp_init_bits.warp_id_in_sm
+  ifu.io.warp_init_pc := Cat(warp_init_bits.pc, 0.U(4.W))  // 恢复完整 PC (压缩 PC << 4)
   ifu.io.warp_exit_valid := false.B
   ifu.io.warp_exit_id := 0.U
   ifu.io.flush_valid := false.B
   ifu.io.flush_warp_id := 0.U
   ifu.io.flush_target_pc := 0.U
+
+  // warp_init_ready: IFU 始终可以接收新 Warp (简化)
+  io.warp_init_ready := true.B
 
   // ── 2. IFU <-> IBuffer (Credit Return) ──
   ifu.io.credit_return_valid := ibuffer.io.ifu.slotReleasedEn
@@ -226,12 +230,12 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
 
   // ── 8. WarpScheduler 控制输入 ──
   scheduler.io.allocReq := io.warp_init_valid
-  scheduler.io.allocWarpId := io.warp_init_id
+  scheduler.io.allocWarpId := warp_init_bits.warp_id_in_sm
   scheduler.io.blkschActiveMask := io.blksch_active_mask
   scheduler.io.blkschBarId := io.blksch_bar_id
-  // v2.0: 传递 Mode_Register 和 TMA_Descriptor_Base
-  scheduler.io.blkschModeRegister := io.blksch_mode_register
-  scheduler.io.blkschTmaDescBase  := io.blksch_tma_desc_base
+  // v2.0: 从 WarpInitBundle 传递 Mode_Register 和 TMA_Descriptor_Base
+  scheduler.io.blkschModeRegister := warp_init_bits.mode_register
+  scheduler.io.blkschTmaDescBase  := warp_init_bits.tma_desc_base
   scheduler.io.kcacheMissWaitMask := io.kcache_miss_wait_mask
   scheduler.io.kcacheFillAckMask := io.kcache_fill_ack_mask
 
@@ -329,6 +333,9 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
   // Warp Exit / Block Done
   io.warp_exit_valid := scheduler.io.wsWarpExitValid
   io.warp_exit_id := scheduler.io.wsWarpExitId
+  // warp_exit_block_id 来自 WarpInitBundle 中保存的 block_id (通过 uGPR 或寄存器)
+  // 简化: 使用 warp_init_bits 中的 block_id_x 作为 block_id
+  io.warp_exit_block_id := warp_init_bits.block_id_x(7, 0)
   io.blksch_block_done := scheduler.io.wsBlockDone
 
   // L0 I-Cache ROC Request

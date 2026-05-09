@@ -172,6 +172,8 @@ class SMSPTop extends Module {
   scheduler.io.allocWarpId := io.warp_init_id
   scheduler.io.blkschActiveMask := 1.U // Always active
   scheduler.io.blkschBarId := 0.U
+  scheduler.io.blkschModeRegister := 0.U(8.W)  // v2.0: Default mode register
+  scheduler.io.blkschTmaDescBase := 0.U(32.W)   // v2.0: Default TMA descriptor base
   scheduler.io.kcacheMissWaitMask := 0.U
   scheduler.io.kcacheFillAckMask := 0.U
   
