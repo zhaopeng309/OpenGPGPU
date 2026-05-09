@@ -42,6 +42,9 @@ class SMInterface(implicit cfg: SMSPConfig) extends Bundle {
   val blksch_active_mask = Input(UInt(32.W))
   val blksch_bar_id = Input(UInt(4.W))
   val blksch_block_done = Output(Bool())
+  // v2.0: 新增字段，来自 Block Scheduler 的 WarpInitBundle
+  val blksch_mode_register = Input(UInt(8.W))   // 硬件特性控制寄存器
+  val blksch_tma_desc_base = Input(UInt(32.W))  // TMA 描述符表基地址
 
   // === L0 I-Cache Fill (来自 ROC) ===
   val roc_icache_fill_valid = Input(Bool())
@@ -226,6 +229,9 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
   scheduler.io.allocWarpId := io.warp_init_id
   scheduler.io.blkschActiveMask := io.blksch_active_mask
   scheduler.io.blkschBarId := io.blksch_bar_id
+  // v2.0: 传递 Mode_Register 和 TMA_Descriptor_Base
+  scheduler.io.blkschModeRegister := io.blksch_mode_register
+  scheduler.io.blkschTmaDescBase  := io.blksch_tma_desc_base
   scheduler.io.kcacheMissWaitMask := io.kcache_miss_wait_mask
   scheduler.io.kcacheFillAckMask := io.kcache_fill_ack_mask
 

@@ -8,6 +8,9 @@ class DispatchBundle extends Bundle {
   val warpId = UInt(5.W)
   val microOp = new MicroOp()
   val vgprBase = UInt(12.W)
+  // v2.0: 新增字段，由 Block Scheduler 在 WarpInitBundle 中提供
+  val modeRegister = UInt(8.W)   // 硬件特性控制寄存器
+  val tmaDescBase  = UInt(32.W)  // TMA 描述符表基地址
 }
 
 class WarpSchedulerIO(val numWarps: Int = 32) extends Bundle {
@@ -31,6 +34,10 @@ class WarpSchedulerIO(val numWarps: Int = 32) extends Bundle {
   // Block Scheduler interface (32-bit active mask per MAS spec)
   val blkschActiveMask = Input(UInt(32.W))
   val blkschBarId = Input(UInt(4.W))
+
+  // ── v2.0: New fields from Block Scheduler ──
+  val blkschModeRegister = Input(UInt(8.W))   // 硬件特性控制寄存器
+  val blkschTmaDescBase  = Input(UInt(32.W))  // TMA 描述符表基地址
 
   // K-Cache interface
   val kcacheMissWaitMask = Input(UInt(numWarps.W))
@@ -62,6 +69,10 @@ class WarpScheduler(val numWarps: Int = 32, val numRegs: Int = 256,
   val wstActiveMask = RegInit(VecInit(Seq.fill(numWarps)(0.U(32.W))))
   val wstBarId = RegInit(VecInit(Seq.fill(numWarps)(0.U(4.W))))
 
+  // ── v2.0: New WST fields from Block Scheduler ──
+  val wstModeRegister = RegInit(VecInit(Seq.fill(numWarps)(0.U(8.W))))
+  val wstTmaDescBase  = RegInit(VecInit(Seq.fill(numWarps)(0.U(32.W))))
+
   // ── Phase 1.1: EXIT tracking ──
   val blockDone = RegInit(false.B)
   val warpExitValid = RegInit(false.B)
@@ -86,6 +97,9 @@ class WarpScheduler(val numWarps: Int = 32, val numRegs: Int = 256,
     wstActiveMask(io.allocWarpId) := io.blkschActiveMask
     wstBarId(io.allocWarpId) := io.blkschBarId
     wstWaitKCache(io.allocWarpId) := false.B
+    // v2.0: Write Mode_Register and TMA_Descriptor_Base from Block Scheduler
+    wstModeRegister(io.allocWarpId) := io.blkschModeRegister
+    wstTmaDescBase(io.allocWarpId)  := io.blkschTmaDescBase
   }
 
   // ==========================================
@@ -253,6 +267,9 @@ class WarpScheduler(val numWarps: Int = 32, val numRegs: Int = 256,
   io.dispatch.bits.warpId := winnerId
   io.dispatch.bits.microOp := io.ibHeadMicroOps(winnerId)
   io.dispatch.bits.vgprBase := wstVgprBase(winnerId)
+  // v2.0: 传递 Mode_Register 和 TMA_Descriptor_Base 到后端
+  io.dispatch.bits.modeRegister := wstModeRegister(winnerId)
+  io.dispatch.bits.tmaDescBase  := wstTmaDescBase(winnerId)
 
   io.wsIbPopReq := false.B
   io.wsIbPopId := winnerId
@@ -286,6 +303,9 @@ class WarpScheduler(val numWarps: Int = 32, val numRegs: Int = 256,
       wstWaitKCache(winnerId) := false.B
       wstActiveMask(winnerId) := 0.U
       wstBarId(winnerId) := 0.U
+      // v2.0: 清零新增字段
+      wstModeRegister(winnerId) := 0.U
+      wstTmaDescBase(winnerId)  := 0.U
 
       // Clear scoreboard slots for this warp
       for (s <- 0 until numScoreboardSlots) {

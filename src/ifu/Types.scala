@@ -14,6 +14,9 @@ class PSTEntry extends Bundle {
   val credits = UInt(3.W)
   val flush_gen_tag = UInt(2.W)
   val inst_id = UInt(64.W)
+  // v2.0: 新增字段，由 Block Scheduler 在 WarpInitBundle 中写入
+  val mode_register = UInt(8.W)   // 硬件特性控制寄存器
+  val tma_desc_base = UInt(32.W)  // TMA 描述符表基地址
 }
 
 object IFUConfig {

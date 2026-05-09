@@ -30,13 +30,21 @@ OpenGPGPU 废弃了传统的硬件收敛栈（Reconvergence Stack），转向纯
 - **WBRA 宏观跳转**：IFU（取指单元）仅需根据 `SR_EXEC` 是否全零执行 `WBRA` 跳转，极大地简化了前端取指逻辑，消除了硬件分支预测器的开销。
 
 ## 7. 硬件引导 ABI 契约
-架构规定了严格的硬件启动初始化（Bootstrapping）规范。在 `PC=0` 时，Warp Allocator 必须确保：
-- `vGPR[R0]` 注入 `Lane_ID`；
-- `uGPR[R0:R1]` 注入 `Block_ID` 与坐标参数；
-- `uGPR[R4:R5]` 注入内核参数区根指针（Kernel Argument Root Pointer）。
+
+架构规定了严格的硬件启动初始化（Bootstrapping）规范。在 Warp 首次被调度执行前，硬件必须完成以下初始化：
+
+- **`vGPR[0]`**：由 Issue Stage 在首次激活 Warp 时，将 0~31 的 Lane 序列直接写入每个线程对应的槽位。每个线程在第一条指令执行前即可通过 `vGPR[0]` 获取自己的 Lane ID。
+- **`uGPR[0]`**：由 Block Scheduler 在分发 Warp 时写入 `Block_ID_X`（Block 在 Grid 中的 X 坐标）。
+- **`uGPR[1]`**：由 Block Scheduler 在分发 Warp 时写入 `Block_ID_Y`（Block 在 Grid 中的 Y 坐标）。
+- **`uGPR[2]`**：由 Block Scheduler 在分发 Warp 时写入 `Block_ID_Z`（Block 在 Grid 中的 Z 坐标）。
+- **`uGPR[3]`**：由 Block Scheduler 在 Kernel Launch 时写入 `GRID_DIM_X`（整个 Grid 在 X 维度的 Block 数量）。
+- **`uGPR[4]`**：由 Block Scheduler 在 Kernel Launch 时写入 `GRID_DIM_Y`（整个 Grid 在 Y 维度的 Block 数量）。
+- **`uGPR[5]`**：由 Block Scheduler 在 Kernel Launch 时写入 `GRID_DIM_Z`（整个 Grid 在 Z 维度的 Block 数量）。
+- **`uGPR[6:7]`**：注入内核参数区根指针（Kernel Argument Root Pointer）。
+
+> **架构变更说明 (v2.0)**：Block ID、Grid Dim 和 Lane ID 不再通过 SFR (`SR_CTA_ID_X/Y/Z`, `SR_GRID_DIM_X/Y/Z`, `SR_LANE_ID`) + `S2R` 指令读取，而是由硬件直接写入通用寄存器文件（uGPR/vGPR）。所有地址偏移计算退化为常规 ALU 运算，例如 `ADD v_addr, u_base, v0`。
 
 内核程序随后通过 `LDC` 指令从 Constant Cache 自主引导后续参数加载，确保了软硬件边界的透明与解耦。
-
 ## 8. 架构实战：指令示例
 
 为了直观展示上述架构哲学的威力，以下提供两个极简内核示例：
@@ -51,27 +59,34 @@ OpenGPGPU 废弃了传统的硬件收敛栈（Reconvergence Stack），转向纯
 ```asm
 // --------------------------------------------------------------------------
 // Kernel: VectorAdd (引导加载阶段 Bootstrapping)
-// 硬件初始隐式 ABI: 
-//   vGPR[R0]      : 预置 Lane_ID (0~31)
-//   uGPR[R0]      : 预置 Block_ID
-//   uGPR[R4_R5]   : 预置 Kernel Argument Root Pointer (参数区根指针)
+// 硬件初始隐式 ABI (v2.0):
+//   vGPR[0]       : 预置 Lane_ID (0~31)，由 Issue Stage 直写
+//   uGPR[0]       : 预置 Block_ID_X，由 Block Scheduler 直写
+//   uGPR[1]       : 预置 Block_ID_Y，由 Block Scheduler 直写
+//   uGPR[2]       : 预置 Block_ID_Z，由 Block Scheduler 直写
+//   uGPR[3]       : 预置 GRID_DIM_X，由 Block Scheduler 直写
+//   uGPR[4]       : 预置 GRID_DIM_Y，由 Block Scheduler 直写
+//   uGPR[5]       : 预置 GRID_DIM_Z，由 Block Scheduler 直写
+//   uGPR[6:7]     : 预置 Kernel Argument Root Pointer (参数区根指针)
 //
 // 操作数类型 (OT) 8-bit 路由规范 (每操作数2-bit)：00=vGPR, 01=uGPR, 10=pGPR, 11=Imm/Const
 // --------------------------------------------------------------------------
 
 // [步骤 0: 从 Constant Cache 拉取内核参数 (Bootstrapping)]
 // 假设 CPU 已经将参数打包好，按照 64-bit 对齐排列。极速拉取并全 Warp 广播。
-LDC.64 R_BaseA,     [R4_R5 + 0x00]   // 抓取输入数组 A 的显存基址
-LDC.64 R_BaseB,     [R4_R5 + 0x08]   // 抓取输入数组 B 的显存基址
-LDC.64 R_BaseC,     [R4_R5 + 0x10]   // 抓取输出数组 C 的显存基址
-LDC.32 R_BlockSize, [R4_R5 + 0x18]   // 抓取 Block Size 大小
-LDC.32 R_N,         [R4_R5 + 0x1C]   // 抓取数组总长度 N
+LDC.64 R_BaseA,     [R6_R7 + 0x00]   // 抓取输入数组 A 的显存基址 (uGPR[6:7] = Kernel Arg Root Ptr)
+LDC.64 R_BaseB,     [R6_R7 + 0x08]   // 抓取输入数组 B 的显存基址
+LDC.64 R_BaseC,     [R6_R7 + 0x10]   // 抓取输出数组 C 的显存基址
+LDC.32 R_BlockSize, [R6_R7 + 0x18]   // 抓取 Block Size 大小
+LDC.32 R_N,         [R6_R7 + 0x1C]   // 抓取数组总长度 N
 
 // [步骤 1: 计算全局唯一 Thread_ID]
 // 算法: Global_TID = Block_ID * BlockSize + Lane_ID
 // 这里完美展示标量-向量混合计算：
+// uGPR[0] = Block_ID_X (Block Scheduler 直写), vGPR[0] = Lane_ID (Issue Stage 直写)
 // OT = 0b00_01_01_00 (Rd=vGPR, Rs1=uGPR, Rs2=uGPR, Rs3=vGPR)
-IMAD.U32 R_TID, R_BlockID, R_BlockSize, R_LaneID 
+// 地址偏移计算直接退化为常规 ALU 运算，无需 S2R 指令
+IMAD.U32 R_TID, uGPR[0], R_BlockSize, vGPR[0]
 
 // [步骤 2: 边界检查]
 // 标量-向量比较，OT = 0b10_00_01_00 (Rd=pGPR, Rs1=vGPR, Rs2=uGPR)
