@@ -210,9 +210,9 @@ OpenGPGPU MVP ISA 包含 **27 条核心指令**，分为 5 个子系统：
 
 一条指令从取指到写回经历以下阶段：
 
-```mermaid
+```mermai
 sequenceDiagram
-    participant IFU as IFU (取指)
+    participant IF as IFU (取指)
     participant IC as L0 I-Cache
     participant DEC as Decoder
     participant IB as I-Buffer
