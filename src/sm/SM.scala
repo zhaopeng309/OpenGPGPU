@@ -6,6 +6,8 @@ import chisel3.util._
 import blksch.{BlockScheduler, BlockDescriptor, WarpInitBundle, BSConfig}
 import opengpgpu.smsp.{SMSP, SMSPConfig, SMInterface}
 import opengpgpu.rbmu._
+import opengpgpu.lsu.{LSUConfig, LSURequest, LSUResponse}
+import opengpgpu.ulm.{ULM, ULMConfig, ULMRequest, ULMResponse, ULMCfgBundle, CarveoutMode}
 
 // ==========================================
 // SM 顶层 IO 接口
@@ -14,13 +16,14 @@ import opengpgpu.rbmu._
 /**
  * SM 顶层模块的 IO 接口
  *
- * 对应 SM 开发计划 Feature 1.1 & 1.3:
- * - NoC/ACE 接口对接 (BD 接收端)
- * - SMSP 阵列接口
- * - RBMU 环路口
- * - LSU/TMA/MMA 后端接口
+ * SM 包含以下子系统:
+ * - LSU: 加载/存储执行单元 (每个 SMSP 内嵌)
+ * - ROC: Read-Only Cache (L1 I-Cache / K-Cache) 汇聚与 Fill 广播
+ * - ULM: Unified Local Memory (Shared Memory)
+ *
+ * Memory (全局内存控制器) 不属于 SM 层级，由上层 NoC 直接连接。
  */
-class SMIO(implicit cfg: SMConfig) extends Bundle {
+class SMIO(implicit cfg: SMConfig, ulmCfg: ULMConfig) extends Bundle {
   // === ACE RMU 接口 (BD 接收) ===
   val bd_valid = Input(Bool())
   val bd_ready = Output(Bool())
@@ -48,11 +51,22 @@ class SMIO(implicit cfg: SMConfig) extends Bundle {
   val roc_kcache_fill_addr  = Input(UInt(48.W))
   val roc_kcache_fill_data  = Input(UInt(512.W))
 
-  // === LSU Hub 接口 (Phase 4 预留) ===
+  // === SMSP LSU 接口 (直通上层 NoC/Memory) ===
   val lsu_req_valid = Output(Vec(cfg.numSmsp, Bool()))
   val lsu_req_ready = Input(Vec(cfg.numSmsp, Bool()))
+  val lsu_req_bits  = Output(Vec(cfg.numSmsp, new LSURequest()))
   val lsu_resp_valid = Input(Vec(cfg.numSmsp, Bool()))
   val lsu_resp_ready = Output(Vec(cfg.numSmsp, Bool()))
+  val lsu_resp_bits  = Input(Vec(cfg.numSmsp, new LSUResponse()))
+
+  // === ULM (Shared Memory) 接口 ===
+  // 每个 SMSP 通过独立端口访问 ULM
+  val ulm_req_valid = Output(Vec(cfg.numSmsp, Bool()))
+  val ulm_req_ready = Input(Vec(cfg.numSmsp, Bool()))
+  val ulm_req_bits  = Output(Vec(cfg.numSmsp, new ULMRequest()))
+  val ulm_resp_valid = Input(Vec(cfg.numSmsp, Bool()))
+  val ulm_resp_ready = Output(Vec(cfg.numSmsp, Bool()))
+  val ulm_resp_bits  = Input(Vec(cfg.numSmsp, new ULMResponse()))
 
   // === MMA (WGMMA) 结果路由 (Phase 4 预留) ===
   val mma_result_valid = Input(Vec(cfg.numSmsp, Bool()))
@@ -97,6 +111,23 @@ class SM(implicit cfg: SMConfig) extends Module {
     threadPerWarp = cfg.threadPerWarp,
     vGPRWidth = cfg.vGPRWidth,
     rcbEntries = cfg.rcbEntriesPerSmsp
+  )
+
+  // ==========================================
+  // LSU 隐式配置
+  // ==========================================
+  implicit val lsuCfg: LSUConfig = LSUConfig(
+    numSmsp = cfg.numSmsp,
+    numWarps = cfg.numWarpsPerSmsp,
+    threadPerWarp = cfg.threadPerWarp,
+    vGPRWidth = cfg.vGPRWidth
+  )
+
+  // ==========================================
+  // ULM 隐式配置
+  // ==========================================
+  implicit val ulmCfg: ULMConfig = ULMConfig(
+    totalSizeKB = cfg.ulmSizeChunks * 8 // ulmSizeChunks=16 → 128KB
   )
 
   // ==========================================
@@ -225,14 +256,66 @@ class SM(implicit cfg: SMConfig) extends Module {
   }
 
   // ==========================================
-  // Phase 4: LSU Hub / MMA / mBarrier 接口 (预留)
+  // SMSP LSU 接口 (直通上层 NoC)
   // ==========================================
+  // 每个 SMSP 的 LSU 请求直接透传到 SM 顶层接口，
+  // 由上层 NoC/Memory 子系统处理。
+  // Memory (全局内存控制器) 不属于 SM 层级。
   for (i <- 0 until cfg.numSmsp) {
     io.lsu_req_valid(i) := smspArray(i).io.lsu_req_valid
     smspArray(i).io.lsu_req_ready := io.lsu_req_ready(i)
+    io.lsu_req_bits(i) := smspArray(i).io.lsu_req_bits
+
     smspArray(i).io.lsu_resp_valid := io.lsu_resp_valid(i)
     io.lsu_resp_ready(i) := smspArray(i).io.lsu_resp_ready
+    smspArray(i).io.lsu_resp_bits := io.lsu_resp_bits(i)
+  }
 
+  // ==========================================
+  // ULM (Unified Local Memory) 实例化与连接
+  // ==========================================
+  // ULM 是 SM 内部的统一局部存储器，通过 LSU 的 mem_req/mem_resp 接口连接。
+  // ULM 是 LSU 的下游存储后端，所有 SMSP 的 LSU 请求经过 LSU Hub 汇聚后访问 ULM。
+  val ulm = Module(new ULM())
+
+  // ULM CSR 配置 (默认: 64KB L1D + 64KB Smem)
+  ulm.io.cfg_bundle.carveout_sel := CarveoutMode.SMEM_64KB_L1D_64KB
+  ulm.io.cfg_bundle.l1d_enable := true.B
+  ulm.io.cfg_bundle.smem_base := 0.U
+  ulm.io.cfg_bundle.flush_l1d := false.B
+
+  // LSU mem_req/mem_resp 直通 (简化: 使用第一个 SMSP 的 LSU 接口)
+  // 实际实现中，这里需要 LSU Hub 进行仲裁
+  ulm.io.mem_req_valid := io.lsu_req_valid(0)
+  io.lsu_req_ready(0) := ulm.io.mem_req_ready
+  ulm.io.mem_req_bits := io.lsu_req_bits(0)
+
+  io.lsu_resp_valid(0) := ulm.io.mem_resp_valid
+  ulm.io.mem_resp_ready := io.lsu_resp_ready(0)
+  io.lsu_resp_bits(0) := ulm.io.mem_resp_bits
+
+  // 其他 SMSP 的 LSU 请求暂时直通到顶层 (由外部 MemoryController 处理)
+  for (i <- 1 until cfg.numSmsp) {
+    io.lsu_req_valid(i) := smspArray(i).io.lsu_req_valid
+    smspArray(i).io.lsu_req_ready := io.lsu_req_ready(i)
+    io.lsu_req_bits(i) := smspArray(i).io.lsu_req_bits
+
+    smspArray(i).io.lsu_resp_valid := io.lsu_resp_valid(i)
+    io.lsu_resp_ready(i) := smspArray(i).io.lsu_resp_ready
+    smspArray(i).io.lsu_resp_bits := io.lsu_resp_bits(i)
+  }
+
+  // ULM 接口 (保留用于外部访问)
+  for (i <- 0 until cfg.numSmsp) {
+    io.ulm_req_ready(i) := false.B
+    io.ulm_resp_valid(i) := false.B
+    io.ulm_resp_bits(i) := 0.U.asTypeOf(new LSUResponse())
+  }
+
+  // ==========================================
+  // Phase 4: MMA / mBarrier 接口 (预留)
+  // ==========================================
+  for (i <- 0 until cfg.numSmsp) {
     smspArray(i).io.mma_result_valid := io.mma_result_valid(i)
     io.mma_result_ready(i) := smspArray(i).io.mma_result_ready
 

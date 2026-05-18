@@ -4,6 +4,8 @@ import chisel3._
 import chisel3.util._
 
 import opengpgpu.sm.{SM, SMConfig, SMIO}
+import opengpgpu.lsu.{LSURequest, LSUResponse}
+import memory.{MemoryRequest, MemoryResponse}
 import blksch.{BlockDescriptor, BSConfig}
 
 /**
@@ -31,6 +33,10 @@ class SMTop(implicit cfg: SMConfig) extends Module {
     val roc_kcache_fill_addr  = Input(UInt(48.W))
     val roc_kcache_fill_data  = Input(UInt(512.W))
 
+    // === MemoryController 接口 ===
+    val mem_req  = Decoupled(new MemoryRequest)
+    val mem_resp = Flipped(Decoupled(new MemoryResponse))
+
     // === 资源状态探针 ===
     val busy = Output(Bool())
     val vgpr_available = Output(UInt(cfg.chunkWidth.W))
@@ -44,6 +50,8 @@ class SMTop(implicit cfg: SMConfig) extends Module {
     val smsp0_warp_exit_id    = Output(UInt(cfg.warpIdWidth.W))
     val smsp0_icache_req_valid = Output(Bool())
     val smsp0_kcache_req_valid = Output(Bool())
+    val smsp0_lsu_req_valid    = Output(Bool())
+    val smsp0_lsu_req_addr     = Output(UInt(64.W))
 
     // === RBMU 环路口 (简化: 仅暴露请求/响应) ===
     val rbmu_req_valid = Output(Bool())
@@ -79,11 +87,33 @@ class SMTop(implicit cfg: SMConfig) extends Module {
   sm.io.roc_kcache_fill_data  := io.roc_kcache_fill_data
 
   // ==========================================
-  // LSU / MMA / mBarrier 接口 (仿真中置零)
+  // MemoryController 接口 (通过 LSU 接口直通)
+  // ==========================================
+  // SM 的 LSU 请求通过 Vec 接口暴露，numSmsp=1 时取第一个
+  // 需要将 LSURequest 转换为 MemoryRequest (字段不同)
+  io.mem_req.valid := sm.io.lsu_req_valid(0)
+  sm.io.lsu_req_ready(0) := io.mem_req.ready
+  io.mem_req.bits.addr    := sm.io.lsu_req_bits(0).addr
+  io.mem_req.bits.data    := sm.io.lsu_req_bits(0).data
+  io.mem_req.bits.size    := 4.U  // 16 bytes
+  io.mem_req.bits.isWrite := sm.io.lsu_req_bits(0).op_type === 1.U  // STG
+  io.mem_req.bits.mask    := sm.io.lsu_req_bits(0).byte_mask
+
+  // MemoryResponse -> LSUResponse 转换
+  sm.io.lsu_resp_valid(0) := io.mem_resp.valid
+  io.mem_resp.ready := sm.io.lsu_resp_ready(0)
+  sm.io.lsu_resp_bits(0).valid      := io.mem_resp.valid
+  sm.io.lsu_resp_bits(0).warp_id    := 0.U
+  sm.io.lsu_resp_bits(0).data       := io.mem_resp.bits.data
+  sm.io.lsu_resp_bits(0).addr       := 0.U
+  sm.io.lsu_resp_bits(0).rd_index   := 0.U
+  sm.io.lsu_resp_bits(0).barrier_id := 0.U
+  sm.io.lsu_resp_bits(0).error      := io.mem_resp.bits.error
+
+  // ==========================================
+  // MMA / mBarrier 接口 (仿真中置零)
   // ==========================================
   for (i <- 0 until cfg.numSmsp) {
-    sm.io.lsu_req_ready(i) := false.B
-    sm.io.lsu_resp_valid(i) := false.B
     sm.io.mma_result_valid(i) := false.B
     sm.io.mbarrier_wakeup_valid(i) := false.B
     sm.io.mbarrier_wakeup_warp_id(i) := 0.U
@@ -120,6 +150,8 @@ class SMTop(implicit cfg: SMConfig) extends Module {
   io.smsp0_warp_exit_id    := 0.U
   io.smsp0_icache_req_valid := sm.io.icache_roc_req_valid(0)
   io.smsp0_kcache_req_valid := sm.io.kcache_roc_req_valid(0)
+  io.smsp0_lsu_req_valid    := sm.io.lsu_req_valid(0)
+  io.smsp0_lsu_req_addr     := sm.io.lsu_req_bits(0).addr
 
   // ==========================================
   // RBMU 探针

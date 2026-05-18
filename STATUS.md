@@ -423,7 +423,7 @@ make doc        # 生成文档
   - [ ] MockBackend 替换为真实 LSU
 ```
 
-### Phase 3: 存储子系统
+- [x] Phase 3: 存储子系统
 
 ```
 目标: LSU + ULM + TMA + WGMMA 实现
@@ -431,8 +431,9 @@ make doc        # 生成文档
 计划:
   - [ ] LSU Hub 实现
   - [ ] ULM (Shared Memory) 实现
-  - [ ] TMA 异步搬运引擎
-  - [ ] WGMMA 张量核心
+  - [x] TMA 异步搬运引擎 (Plan Archiving Complete)
+  - [x] WGMMA 张量核心 (Plan Archiving Complete)
+  - [x] mBarrier 异步屏障 (Plan Archiving Complete)
   - [ ] ROC 统一只读缓存
 ```
 

@@ -3,6 +3,7 @@ package sim.sm.Mock
 import chisel3._
 import chisel3.util._
 import opengpgpu.sm.SMConfig
+import opengpgpu.lsu.{LSURequest, LSUResponse}
 
 /**
  * SM 后端 Mock 模块
@@ -20,8 +21,10 @@ class MockBackend(implicit cfg: SMConfig) extends Module {
     // === LSU Hub 接口 (来自 SMSP) ===
     val lsu_req_valid = Input(Vec(cfg.numSmsp, Bool()))
     val lsu_req_ready = Output(Vec(cfg.numSmsp, Bool()))
+    val lsu_req_bits  = Input(Vec(cfg.numSmsp, new LSURequest()))
     val lsu_resp_valid = Output(Vec(cfg.numSmsp, Bool()))
     val lsu_resp_ready = Input(Vec(cfg.numSmsp, Bool()))
+    val lsu_resp_bits  = Output(Vec(cfg.numSmsp, new LSUResponse()))
 
     // === MMA 结果路由 ===
     val mma_result_valid = Output(Vec(cfg.numSmsp, Bool()))
@@ -72,14 +75,17 @@ class MockLSUHub(implicit cfg: SMConfig) extends Module {
   val io = IO(new Bundle {
     val lsu_req_valid = Input(Vec(cfg.numSmsp, Bool()))
     val lsu_req_ready = Output(Vec(cfg.numSmsp, Bool()))
+    val lsu_req_bits  = Input(Vec(cfg.numSmsp, new LSURequest()))
     val lsu_resp_valid = Output(Vec(cfg.numSmsp, Bool()))
     val lsu_resp_ready = Input(Vec(cfg.numSmsp, Bool()))
+    val lsu_resp_bits  = Output(Vec(cfg.numSmsp, new LSUResponse()))
   })
 
   // 始终 ready
   for (i <- 0 until cfg.numSmsp) {
     io.lsu_req_ready(i) := true.B
     io.lsu_resp_valid(i) := false.B
+    io.lsu_resp_bits(i) := DontCare
   }
 }
 

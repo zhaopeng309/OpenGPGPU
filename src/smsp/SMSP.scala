@@ -12,6 +12,7 @@ import scheduler.{WarpScheduler, Scoreboard, SchedulerLogic}
 import opengpgpu.collector.{OperandCollector, CollectorConfig}
 import opengpgpu.register.{vGPR_Top, pGPR, uGPR, RegisterFileConfig}
 import opengpgpu.valu.vALU
+import opengpgpu.lsu.{LSU, LSUConfig}
 import opengpgpu.RCB.{RCB, RCBConfig}
 
 // ==========================================
@@ -63,11 +64,13 @@ class SMInterface(implicit cfg: SMSPConfig) extends Bundle {
   val kcache_roc_req_valid = Output(Bool())
   val kcache_roc_req_addr = Output(UInt(48.W))
 
-  // === LSU_Hub 接口 (Phase 3 预留) ===
+  // === LSU_Hub 接口 ===
   val lsu_req_valid = Output(Bool())
   val lsu_req_ready = Input(Bool())
+  val lsu_req_bits  = Output(new opengpgpu.lsu.LSURequest())
   val lsu_resp_valid = Input(Bool())
   val lsu_resp_ready = Output(Bool())
+  val lsu_resp_bits  = Input(new opengpgpu.lsu.LSUResponse())
 
   // === mBarrier 唤醒通路 (Phase 3 预留) ===
   val mbarrier_wakeup_valid = Input(Bool())
@@ -103,6 +106,13 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
     numWarps = cfg.numWarps,
     numEntries = cfg.rcbEntries,
     numBanks = cfg.numBanks,
+    threadPerWarp = cfg.threadPerWarp,
+    vGPRWidth = cfg.vGPRWidth
+  )
+
+  implicit val lsuCfg: LSUConfig = LSUConfig(
+    numSmsp = 1,  // 每个 SMSP 内部只有一个 LSU 执行单元
+    numWarps = cfg.numWarps,
     threadPerWarp = cfg.threadPerWarp,
     vGPRWidth = cfg.vGPRWidth
   )
@@ -151,6 +161,9 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
 
   // --- 执行: vALU ---
   val valu = Module(new vALU())
+
+  // --- 执行: LSU (宏流水线: ARU -> AGU -> ACU -> MRQ -> MOU -> DRU) ---
+  val lsu = Module(new LSU())
 
   // --- 写回: RCB ---
   val rcb = Module(new RCB())
@@ -290,13 +303,35 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
     rcb.io.o_bk_write(i).ready := true.B
   }
 
-  // ── 12. Collector -> vALU -> RCB ──
-  valu.io.in <> collector.io.issue
+  // ── 12. Collector -> vALU/LSU (Opcode-based Routing) ──
+  // 根据 opcode 将指令路由到 vALU 或 LSU:
+  //   LDG=0x0D, STG=0x0E, LDC=0x0C, ATOM, TMA → LSU
+  //   其他 → vALU
+  val isLsuOp = (collector.io.issue.bits.opcode === 0x0D.U) ||
+                (collector.io.issue.bits.opcode === 0x0C.U) // STG (0x0E) 现在先去 vALU，再由 vALU 送给 LSU bypass
+
+  val isLsuStore = (collector.io.issue.bits.opcode === 0x0E.U)
+
+  // vALU 接收非 LSU 指令，以及 STG/STS 等需要预计算地址的 LSU store 指令
+  valu.io.in.valid := collector.io.issue.valid && (!isLsuOp || isLsuStore)
+  valu.io.in.bits  := collector.io.issue.bits
+
+  // LSU 接收普通 LSU 指令 (Load)
+  // lsu.io.in 是 Vec(lsuCfg.numSmsp, ...)，numSmsp=1 所以用索引 (0)
+  lsu.io.in(0).valid := collector.io.issue.valid && isLsuOp && !isLsuStore
+  lsu.io.in(0).bits  := collector.io.issue.bits
+
+  // vALU 的 STG bypass 路由到 LSU 的 valu_bypass
+  lsu.io.valu_bypass(0) <> valu.io.lsu_out
+
+  // collector.io.issue.ready: 当 vALU 或 LSU 任一可接收时
+  collector.io.issue.ready := Mux(isLsuOp && !isLsuStore, lsu.io.in(0).ready, valu.io.in.ready)
+
+  // ── 13. vALU -> RCB ──
   rcb.io.i_valu_res <> valu.io.out
 
-  // RCB 未使用的输入
-  rcb.io.i_lsu_res.valid := false.B
-  rcb.io.i_lsu_res.bits := DontCare
+  // ── 14. LSU -> RCB ──
+  rcb.io.i_lsu_res <> lsu.io.out
   rcb.io.i_a2v_res.valid := false.B
   rcb.io.i_a2v_res.bits := DontCare
   rcb.io.bypass_query.valid := false.B
@@ -346,9 +381,17 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
   io.kcache_roc_req_valid := kcache.io.roc_req.valid
   io.kcache_roc_req_addr := kcache.io.roc_req.addr
 
-  // LSU_Hub 接口 (Phase 3 预留, 当前置零)
-  io.lsu_req_valid := false.B
-  io.lsu_resp_ready := false.B
+  // ── 17. LSU Hub 接口 ──
+  // LSU 执行单元 <-> SM 级 LSUHub
+  // LSU 使用 Decoupled LSURequest/LSUResponse 接口
+  io.lsu_req_valid := lsu.io.mem_req_valid
+  io.lsu_req_ready <> lsu.io.mem_req_ready
+  io.lsu_req_bits := lsu.io.mem_req_bits
+
+  // lsu.io.mem_resp 是 Flipped(Valid(new LSUResponse()))，没有 .ready 信号
+  lsu.io.mem_resp_valid := io.lsu_resp_valid
+  io.lsu_resp_ready := true.B  // Valid 接口没有 ready，始终可接收
+  lsu.io.mem_resp_bits := io.lsu_resp_bits
 
   // MMA 结果路由 (Phase 3 预留, 当前置零)
   io.mma_result_ready := false.B

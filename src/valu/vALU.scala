@@ -7,6 +7,7 @@ import opengpgpu.collector.{OperandBundle, CollectorConfig}
 class vALUIO(implicit config: CollectorConfig) extends Bundle {
   val in = Flipped(Decoupled(new OperandBundle()))
   val out = Decoupled(new ResultPacket())
+  val lsu_out = Decoupled(new OperandBundle())
 }
 
 class vALU(implicit config: CollectorConfig) extends Module {
@@ -114,6 +115,8 @@ class vALU(implicit config: CollectorConfig) extends Module {
   
   val isBeat3 = (ex3_beat === 3.U) && ex3_valid
   
+  val is_stg_sts = (ex3_op.opcode === 0x0E.U) // 假设 0x0E 是 STG/STS
+
   when (!stall) {
     when (ex3_valid) {
       for (i <- 0 until numPEs) {
@@ -123,13 +126,12 @@ class vALU(implicit config: CollectorConfig) extends Module {
     
     ex4_out_valid := isBeat3
     when (isBeat3) {
-      outPacket.warp_id     := ex3_op.wid        // OperandBundle 仍使用 wid
-      outPacket.rd_index    := ex3_op.rd          // OperandBundle 仍使用 rd
+      outPacket.warp_id     := ex3_op.wid
+      outPacket.rd_index    := ex3_op.rd
       outPacket.write_mask  := ex3_op.activeMask & ex3_op.predMask
-      outPacket.barrier_id  := 0.U                // Phase 1: 暂不支持屏障同步
-      outPacket.source_type := 0.U                // Phase 1: 固定为 vALU
-      outPacket.dest_type   := 0.U                // Phase 1: 固定为 vGPR
-      // Reassemble
+      outPacket.barrier_id  := 0.U
+      outPacket.source_type := 0.U
+      outPacket.dest_type   := 0.U
       for (b <- 0 until 3) {
         for (i <- 0 until numPEs) {
           outPacket.data(b * numPEs + i) := accumBuffer(b * numPEs + i)
@@ -141,8 +143,17 @@ class vALU(implicit config: CollectorConfig) extends Module {
     }
   }
   
-  stall := ex4_out_valid && !io.out.ready
+  stall := ex4_out_valid && Mux(is_stg_sts, !io.lsu_out.ready, !io.out.ready)
   
-  io.out.valid := ex4_out_valid
+  io.out.valid := ex4_out_valid && !is_stg_sts
   io.out.bits := outPacket
+
+  io.lsu_out.valid := ex4_out_valid && is_stg_sts
+  // 将 vALU 计算的结果作为 src3Data (Store Data) 传递给 LSU
+  // 或者修改 src1Data (Addr Base)
+  // 此处简单透传，并将计算出的地址存入 OperandBundle，供 LSU bypass
+  io.lsu_out.bits := ex3_op
+  for (i <- 0 until config.threadPerWarp) {
+    io.lsu_out.bits.src3Data(i) := outPacket.data(i) // 存放结果数据
+  }
 }

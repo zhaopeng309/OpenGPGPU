@@ -12,6 +12,7 @@ import scheduler.{WarpScheduler, Scoreboard}
 import opengpgpu.collector.{OperandCollector, CollectorConfig}
 import opengpgpu.register.{vGPR_Top, pGPR, uGPR, RegisterFileConfig}
 import opengpgpu.valu.vALU
+import opengpgpu.lsu.{LSU, LSUConfig}
 import opengpgpu.RCB.{RCB, RCBConfig}
 
 class SMSPTop extends Module {
@@ -72,6 +73,12 @@ class SMSPTop extends Module {
     // === VGPR 探针 ===
     val vgpr_read_reqs = Output(Vec(4, Bool()))
     val vgpr_write_reqs = Output(Vec(4, Bool()))
+
+    // === LSU 探针 (新增) ===
+    val lsu_mem_req_valid = Output(Bool())
+    val lsu_mem_req_addr  = Output(UInt(64.W))
+    val lsu_mem_req_op    = Output(UInt(4.W))
+    val lsu_out_valid     = Output(Bool())
   })
 
   // === 实例化所有子模块 ===
@@ -100,7 +107,16 @@ class SMSPTop extends Module {
       threadPerWarp = 32,
       vGPRWidth = 32
     )
+    implicit val lsuCfg: LSUConfig = LSUConfig(
+      numSmsp = 1,
+      numWarps = 8,
+      threadPerWarp = 32,
+      vGPRWidth = 32
+    )
     val rcb = Module(new RCB())
+
+    // --- 执行: LSU (宏流水线) ---
+    val lsu = Module(new LSU())
 
     // ==========================================
   // 连接逻辑
@@ -223,15 +239,24 @@ class SMSPTop extends Module {
     rcb.io.o_bk_write(i).ready := true.B // Assume VGPR is always ready for writes in SMSPTop
   }
   
-  // Operand Collector <-> vALU
-  valu.io.in <> collector.io.issue
-  
+  // Operand Collector -> vALU/LSU (Opcode-based Routing)
+  val isLsuOp = (collector.io.issue.bits.opcode === 0x0D.U) ||
+                (collector.io.issue.bits.opcode === 0x0E.U) ||
+                (collector.io.issue.bits.opcode === 0x0C.U)
+
+  valu.io.in.valid := collector.io.issue.valid && !isLsuOp
+  valu.io.in.bits  := collector.io.issue.bits
+
+  lsu.io.in(0).valid := collector.io.issue.valid && isLsuOp
+  lsu.io.in(0).bits  := collector.io.issue.bits
+
+  collector.io.issue.ready := Mux(isLsuOp, lsu.io.in(0).ready, valu.io.in.ready)
+
   // vALU <-> RCB
   rcb.io.i_valu_res <> valu.io.out
   
-  // RCB unused inputs
-  rcb.io.i_lsu_res.valid := false.B
-  rcb.io.i_lsu_res.bits := DontCare
+  // LSU_Phase3 <-> RCB
+  rcb.io.i_lsu_res <> lsu.io.out
   rcb.io.i_a2v_res.valid := false.B
   rcb.io.i_a2v_res.bits := DontCare
   rcb.io.bypass_query.valid := false.B
@@ -300,4 +325,10 @@ class SMSPTop extends Module {
     io.vgpr_read_reqs(i) := vgpr.io.readReqs(i).valid
     io.vgpr_write_reqs(i) := vgpr.io.writeReqs(i).valid
   }
+
+  // LSU 探针
+  io.lsu_mem_req_valid := lsu.io.mem_req.valid
+  io.lsu_mem_req_addr  := lsu.io.mem_req.bits.addr
+  io.lsu_mem_req_op    := lsu.io.mem_req.bits.op_type
+  io.lsu_out_valid     := lsu.io.out.valid
 }
