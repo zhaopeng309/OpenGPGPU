@@ -91,7 +91,7 @@ class ACU(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
     val temp_addrs = Wire(Vec(32, UInt(64.W)))
     val temp_masks = Wire(Vec(32, UInt(config.threadPerWarp.W)))
     val temp_offsets = Wire(Vec(32, UInt(7.W)))
-    var temp_count = 0
+    val group_valids = Wire(Vec(32, Bool()))
 
     // 初始化所有临时变量为 0
     for (i <- 0 until 32) {
@@ -101,9 +101,9 @@ class ACU(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
     }
 
     // 遍历每个线程，按 Cache Line 基地址分组
-    val assigned = Wire(Vec(config.threadPerWarp, Bool()))
+    val assigned_stages = Wire(Vec(33, Vec(config.threadPerWarp, Bool())))
     for (i <- 0 until config.threadPerWarp) {
-      assigned(i) := false.B
+      assigned_stages(0)(i) := false.B
     }
 
     // 外层循环: 查找新的 Cache Line 组
@@ -111,46 +111,40 @@ class ACU(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
       // 找到第一个未分配的线程
       val first_unassigned = Wire(UInt(6.W))
       // 使用 PriorityEncoder 风格的查找
-      val unassigned_vec = Wire(UInt(config.threadPerWarp.W))
-      unassigned_vec := 0.U
+      val unassigned_bits = Wire(Vec(config.threadPerWarp, Bool()))
       for (i <- 0 until config.threadPerWarp) {
-        when(io.in.bits.valid_mask(i) && !assigned(i)) {
-          unassigned_vec := unassigned_vec.bitSet(i.U, true.B)
-        }
+        unassigned_bits(i) := io.in.bits.valid_mask(i) && !assigned_stages(g)(i)
       }
+      val unassigned_vec = unassigned_bits.asUInt
       first_unassigned := PriorityEncoder(unassigned_vec)
 
       val has_unassigned = unassigned_vec.orR
       val group_line_addr = Mux(has_unassigned, line_addrs(first_unassigned), 0.U)
 
       // 收集该组的所有线程
-      var group_mask = 0.U(config.threadPerWarp.W)
+      val group_bits = Wire(Vec(config.threadPerWarp, Bool()))
       for (i <- 0 until config.threadPerWarp) {
-        val in_group = io.in.bits.valid_mask(i) && !assigned(i) &&
+        val in_group = io.in.bits.valid_mask(i) && !assigned_stages(g)(i) &&
                        line_addrs(i) === group_line_addr
-        when(in_group) {
-          assigned(i) := true.B
-        }
-        group_mask = group_mask | (io.in.bits.valid_mask(i) && line_addrs(i) === group_line_addr).asUInt << i.U
+        
+        assigned_stages(g+1)(i) := Mux(in_group, true.B, assigned_stages(g)(i))
+        group_bits(i) := io.in.bits.valid_mask(i) && line_addrs(i) === group_line_addr
       }
+      val group_mask = group_bits.asUInt
 
       // 写入合并结果
       temp_addrs(g) := group_line_addr
       temp_masks(g) := group_mask
-      // offset 取组内第一个线程的 offset
+      // offset 取组内第一个线程 of offset
       temp_offsets(g) := Mux(has_unassigned, line_offsets(first_unassigned), 0.U)
-
-      // 计数
-      when(has_unassigned) {
-        temp_count = g + 1
-      }
+      group_valids(g) := has_unassigned
     }
 
     // 将临时结果写入寄存器
     coalesced_addrs := temp_addrs
     coalesced_masks := temp_masks
     coalesced_offsets := temp_offsets
-    req_count := temp_count.U
+    req_count := PopCount(group_valids)
     output_idx := 0.U
     state := sOutput
   }

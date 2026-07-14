@@ -106,7 +106,7 @@ class LSU(implicit config: CollectorConfig, lsuCfg: LSUConfig, rcbCfg: RCBConfig
   lsu_resp_from_ulm.bits.valid := io.ulm_resp.valid
   lsu_resp_from_ulm.bits.warp_id := io.ulm_resp.bits.warp_id
   lsu_resp_from_ulm.bits.data := io.ulm_resp.bits.data
-  lsu_resp_from_ulm.bits.addr := 0.U // Not available from ULMResponse directly, MRQ uses rd_index
+  lsu_resp_from_ulm.bits.addr := mrq.io.resp_addr
   lsu_resp_from_ulm.bits.rd_index := io.ulm_resp.bits.rd_index
   lsu_resp_from_ulm.bits.barrier_id := io.ulm_resp.bits.barrier_id
   lsu_resp_from_ulm.bits.error := io.ulm_resp.bits.error
@@ -115,9 +115,7 @@ class LSU(implicit config: CollectorConfig, lsuCfg: LSUConfig, rcbCfg: RCBConfig
   ldq.io.mem_resp := lsu_resp_from_ulm
 
   // 7. MRQ 响应完成 -> DRU -> RCB 写回
-  // TODO: DRU 从 LDQ 取数据
-  // 由于 DRU 目前还兼容了 buffer 功能，这里直接将 MRQ 通知和内存响应给 DRU
-  dru.io.mem_resp := lsu_resp_from_ulm
+  dru.io.ldq_deq <> ldq.io.deq
   dru.io.mrq_notify <> mrq.io.dru_notify
 
   io.out <> dru.io.out

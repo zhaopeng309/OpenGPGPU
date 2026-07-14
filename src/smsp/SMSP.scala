@@ -33,7 +33,7 @@ case class SMSPConfig(
 // SM 级接口定义
 // SMSP 通过此接口与 SM 全局资源通信
 // ==========================================
-class SMInterface(implicit cfg: SMSPConfig) extends Bundle {
+class SMInterface(implicit cfg: SMSPConfig, ulmCfg: opengpgpu.ulm.ULMConfig) extends Bundle {
   // === Block Scheduler 接口 (Decoupled WarpInitBundle) ===
   val warp_init_valid = Input(Bool())
   val warp_init_ready = Output(Bool())
@@ -64,13 +64,9 @@ class SMInterface(implicit cfg: SMSPConfig) extends Bundle {
   val kcache_roc_req_valid = Output(Bool())
   val kcache_roc_req_addr = Output(UInt(48.W))
 
-  // === LSU_Hub 接口 ===
-  val lsu_req_valid = Output(Bool())
-  val lsu_req_ready = Input(Bool())
-  val lsu_req_bits  = Output(new opengpgpu.lsu.LSURequest())
-  val lsu_resp_valid = Input(Bool())
-  val lsu_resp_ready = Output(Bool())
-  val lsu_resp_bits  = Input(new opengpgpu.lsu.LSUResponse())
+  // === ULM 接口 ===
+  val ulm_req = Decoupled(new opengpgpu.ulm.ULMRequest())
+  val ulm_resp = Flipped(Valid(new opengpgpu.ulm.ULMResponse()))
 
   // === mBarrier 唤醒通路 (Phase 3 预留) ===
   val mbarrier_wakeup_valid = Input(Bool())
@@ -90,11 +86,11 @@ class SMInterface(implicit cfg: SMSPConfig) extends Bundle {
 // 封装所有私有资源，提供标准化 SM 级接口
 // ==========================================
 class SMSP(implicit cfg: SMSPConfig) extends Module {
-  val io = IO(new SMInterface())
-
   // ==========================================
   // 隐式配置参数
   // ==========================================
+  implicit val ulmCfg: opengpgpu.ulm.ULMConfig = opengpgpu.ulm.ULMConfig()
+
   implicit val collConfig: CollectorConfig = CollectorConfig(
     numCUs = cfg.numCUs,
     numBanks = cfg.numBanks,
@@ -116,6 +112,8 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
     threadPerWarp = cfg.threadPerWarp,
     vGPRWidth = cfg.vGPRWidth
   )
+
+  val io = IO(new SMInterface())
 
   val rfConfig = RegisterFileConfig(
     numWarps = cfg.numWarps,
@@ -381,17 +379,9 @@ class SMSP(implicit cfg: SMSPConfig) extends Module {
   io.kcache_roc_req_valid := kcache.io.roc_req.valid
   io.kcache_roc_req_addr := kcache.io.roc_req.addr
 
-  // ── 17. LSU Hub 接口 ──
-  // LSU 执行单元 <-> SM 级 LSUHub
-  // LSU 使用 Decoupled LSURequest/LSUResponse 接口
-  io.lsu_req_valid := lsu.io.mem_req_valid
-  io.lsu_req_ready <> lsu.io.mem_req_ready
-  io.lsu_req_bits := lsu.io.mem_req_bits
-
-  // lsu.io.mem_resp 是 Flipped(Valid(new LSUResponse()))，没有 .ready 信号
-  lsu.io.mem_resp_valid := io.lsu_resp_valid
-  io.lsu_resp_ready := true.B  // Valid 接口没有 ready，始终可接收
-  lsu.io.mem_resp_bits := io.lsu_resp_bits
+  // ── 17. ULM 接口 ──
+  io.ulm_req <> lsu.io.ulm_req
+  lsu.io.ulm_resp <> io.ulm_resp
 
   // MMA 结果路由 (Phase 3 预留, 当前置零)
   io.mma_result_ready := false.B

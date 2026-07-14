@@ -15,7 +15,7 @@ class RQI(implicit config: CollectorConfig, lsuCfg: LSUConfig, ulmCfg: ULMConfig
     val mrq_req = Flipped(Decoupled(new LSURequest()))
 
     // 从 SDQ 接收对齐好的数据 (Store)
-    val sdq_data = Flipped(Decoupled(new GlobalSDQDeq()))
+    val sdq_data = Flipped(Decoupled(new GlobalSDQOutput()))
 
     // 向 ULM 发送的请求
     val ulm_req = Decoupled(new ULMRequest())

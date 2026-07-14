@@ -256,26 +256,9 @@ class SM(implicit cfg: SMConfig) extends Module {
   }
 
   // ==========================================
-  // SMSP LSU 接口 (直通上层 NoC)
+  // SMSP ULM/LSU 接口连接 (直通上层 NoC/Memory)
   // ==========================================
-  // 每个 SMSP 的 LSU 请求直接透传到 SM 顶层接口，
-  // 由上层 NoC/Memory 子系统处理。
-  // Memory (全局内存控制器) 不属于 SM 层级。
-  for (i <- 0 until cfg.numSmsp) {
-    io.lsu_req_valid(i) := smspArray(i).io.lsu_req_valid
-    smspArray(i).io.lsu_req_ready := io.lsu_req_ready(i)
-    io.lsu_req_bits(i) := smspArray(i).io.lsu_req_bits
-
-    smspArray(i).io.lsu_resp_valid := io.lsu_resp_valid(i)
-    io.lsu_resp_ready(i) := smspArray(i).io.lsu_resp_ready
-    smspArray(i).io.lsu_resp_bits := io.lsu_resp_bits(i)
-  }
-
-  // ==========================================
-  // ULM (Unified Local Memory) 实例化与连接
-  // ==========================================
-  // ULM 是 SM 内部的统一局部存储器，通过 LSU 的 mem_req/mem_resp 接口连接。
-  // ULM 是 LSU 的下游存储后端，所有 SMSP 的 LSU 请求经过 LSU Hub 汇聚后访问 ULM。
+  // ULM 实例化
   val ulm = Module(new ULM())
 
   // ULM CSR 配置 (默认: 64KB L1D + 64KB Smem)
@@ -284,32 +267,48 @@ class SM(implicit cfg: SMConfig) extends Module {
   ulm.io.cfg_bundle.smem_base := 0.U
   ulm.io.cfg_bundle.flush_l1d := false.B
 
-  // LSU mem_req/mem_resp 直通 (简化: 使用第一个 SMSP 的 LSU 接口)
-  // 实际实现中，这里需要 LSU Hub 进行仲裁
-  ulm.io.mem_req_valid := io.lsu_req_valid(0)
-  io.lsu_req_ready(0) := ulm.io.mem_req_ready
-  ulm.io.mem_req_bits := io.lsu_req_bits(0)
+  // SMSP 0 内部 LSU 的 ULM 请求直接连接到本地 ULM 模块
+  ulm.io.mem_req_valid := smspArray(0).io.ulm_req.valid
+  smspArray(0).io.ulm_req.ready := ulm.io.mem_req_ready
+  ulm.io.mem_req_bits := smspArray(0).io.ulm_req.bits
 
-  io.lsu_resp_valid(0) := ulm.io.mem_resp_valid
-  ulm.io.mem_resp_ready := io.lsu_resp_ready(0)
-  io.lsu_resp_bits(0) := ulm.io.mem_resp_bits
+  smspArray(0).io.ulm_resp.valid := ulm.io.mem_resp_valid
+  ulm.io.mem_resp_ready := true.B
+  smspArray(0).io.ulm_resp.bits := ulm.io.mem_resp_bits
 
-  // 其他 SMSP 的 LSU 请求暂时直通到顶层 (由外部 MemoryController 处理)
+  // 将 SMSP 0 的 ULM 请求/响应信号也透传到 SM 顶层 ULM 接口以便监测和测试
+  io.ulm_req_valid(0) := smspArray(0).io.ulm_req.valid
+  io.ulm_req_bits(0) := smspArray(0).io.ulm_req.bits
+  io.ulm_resp_valid(0) := ulm.io.mem_resp_valid
+  io.ulm_resp_bits(0) := ulm.io.mem_resp_bits
+
+  // 其他 SMSP (1 到 3) 的 ULM 接口直通到 SM 顶层，由外部处理
   for (i <- 1 until cfg.numSmsp) {
-    io.lsu_req_valid(i) := smspArray(i).io.lsu_req_valid
-    smspArray(i).io.lsu_req_ready := io.lsu_req_ready(i)
-    io.lsu_req_bits(i) := smspArray(i).io.lsu_req_bits
+    io.ulm_req_valid(i) := smspArray(i).io.ulm_req.valid
+    smspArray(i).io.ulm_req.ready := io.ulm_req_ready(i)
+    io.ulm_req_bits(i) := smspArray(i).io.ulm_req.bits
 
-    smspArray(i).io.lsu_resp_valid := io.lsu_resp_valid(i)
-    io.lsu_resp_ready(i) := smspArray(i).io.lsu_resp_ready
-    smspArray(i).io.lsu_resp_bits := io.lsu_resp_bits(i)
+    smspArray(i).io.ulm_resp.valid := io.ulm_resp_valid(i)
+    io.ulm_resp_ready(i) := true.B
+    smspArray(i).io.ulm_resp.bits := io.ulm_resp_bits(i)
   }
 
-  // ULM 接口 (保留用于外部访问)
-  for (i <- 0 until cfg.numSmsp) {
-    io.ulm_req_ready(i) := false.B
-    io.ulm_resp_valid(i) := false.B
-    io.ulm_resp_bits(i) := 0.U.asTypeOf(new LSUResponse())
+  // ==========================================
+  // ULM L2 Cache Miss (MSHR) 接口直通到 SM 顶层 LSU 接口
+  // ==========================================
+  io.lsu_req_valid(0) := ulm.io.l2_req.valid
+  ulm.io.l2_req.ready := io.lsu_req_ready(0)
+  io.lsu_req_bits(0) := ulm.io.l2_req.bits
+
+  ulm.io.l2_resp.valid := io.lsu_resp_valid(0)
+  io.lsu_resp_ready(0) := true.B
+  ulm.io.l2_resp.bits := io.lsu_resp_bits(0)
+
+  // 其他 SMSP (1 到 3) 的 LSU 接口直通到 SM 顶层，作为后备
+  for (i <- 1 until cfg.numSmsp) {
+    io.lsu_req_valid(i) := false.B
+    io.lsu_req_bits(i) := 0.U.asTypeOf(new LSURequest())
+    io.lsu_resp_ready(i) := false.B
   }
 
   // ==========================================

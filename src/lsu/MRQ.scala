@@ -61,6 +61,7 @@ class MRQ(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
     // 状态输出
     val busy = Output(Bool())
     val pending_count = Output(UInt(log2Ceil(MRQConfig().numEntries + 1).W))
+    val resp_addr = Output(UInt(64.W))
   })
 
   val mrqCfg = MRQConfig()
@@ -169,8 +170,8 @@ class MRQ(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
   // 根据 Tag 查找对应的 MRQ 条目
   val resp_tag = io.mem_resp.bits.rd_index // 复用 rd_index 字段传递 Tag
   val resp_match = Wire(Vec(mrqCfg.numEntries, Bool()))
-  var resp_match_idx = 0.U(log2Ceil(mrqCfg.numEntries).W)
-  var resp_found = false.B
+  val resp_match_idx = Wire(UInt(log2Ceil(mrqCfg.numEntries).W))
+  val resp_found = Wire(Bool())
 
   for (i <- 0 until mrqCfg.numEntries) {
     resp_match(i) := entries(i).valid && !entries(i).resp_received &&
@@ -193,7 +194,6 @@ class MRQ(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
   io.dru_notify.valid := all_completed && !acu_in_flight
   io.dru_notify.bits.op := acu_op_reg
   io.dru_notify.bits.op_type := acu_op_type_reg
-  io.dru_notify.bits.data := 0.U // DRU 会从响应中收集数据
 
   when(io.dru_notify.valid && io.dru_notify.ready) {
     // 清除所有已完成的条目
@@ -209,4 +209,5 @@ class MRQ(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
   // ── 状态输出 ──
   io.busy := pending_count > 0.U || acu_in_flight
   io.pending_count := pending_count
+  io.resp_addr := Mux(io.mem_resp.valid && resp_found, entries(resp_match_idx).addr, 0.U)
 }

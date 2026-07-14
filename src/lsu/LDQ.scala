@@ -8,6 +8,7 @@ class LDQEntry(implicit config: CollectorConfig) extends Bundle {
   val data = UInt(128.W)
   val addr = UInt(64.W) // Used to match with MRQ tag/address
   val active_mask = UInt(config.threadPerWarp.W)
+  def byte_offset = addr(6, 0)
 }
 
 /**
@@ -24,7 +25,7 @@ class LDQ(implicit config: CollectorConfig, lsuCfg: LSUConfig) extends Module {
   })
 
   // 使用标准的 FIFO 队列作为缓冲
-  val queue = Module(new Queue(new LDQEntry(), lsuCfg.ldqDepth))
+  val queue = Module(new Queue(new LDQEntry(), lsuCfg.lsuQueueDepth))
 
   // 将 mem_resp 转入 queue
   queue.io.enq.valid := io.mem_resp.valid

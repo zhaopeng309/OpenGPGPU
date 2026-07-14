@@ -14,6 +14,7 @@ import opengpgpu.register.{vGPR_Top, pGPR, uGPR, RegisterFileConfig}
 import opengpgpu.valu.vALU
 import opengpgpu.lsu.{LSU, LSUConfig}
 import opengpgpu.RCB.{RCB, RCBConfig}
+import opengpgpu.ulm.ULMConfig
 
 class SMSPTop extends Module {
   // 定义所有的探针(Probe)接口，将子模块的状态暴露出来供 Testbench 捕获
@@ -113,6 +114,7 @@ class SMSPTop extends Module {
       threadPerWarp = 32,
       vGPRWidth = 32
     )
+    implicit val ulmCfg: ULMConfig = ULMConfig()
     val rcb = Module(new RCB())
 
     // --- 执行: LSU (宏流水线) ---
@@ -327,8 +329,8 @@ class SMSPTop extends Module {
   }
 
   // LSU 探针
-  io.lsu_mem_req_valid := lsu.io.mem_req.valid
-  io.lsu_mem_req_addr  := lsu.io.mem_req.bits.addr
-  io.lsu_mem_req_op    := lsu.io.mem_req.bits.op_type
+  io.lsu_mem_req_valid := lsu.io.ulm_req.valid
+  io.lsu_mem_req_addr  := lsu.io.ulm_req.bits.addr
+  io.lsu_mem_req_op    := lsu.io.ulm_req.bits.req_type
   io.lsu_out_valid     := lsu.io.out.valid
 }

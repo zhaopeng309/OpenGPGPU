@@ -31,19 +31,19 @@ class ULM(implicit cfg: ULMConfig) extends Module {
     // LSU 是 ULM 的上游，ULM 是 LSU 的下游存储后端
     val mem_req_valid = Input(Bool())
     val mem_req_ready = Output(Bool())
-    val mem_req_bits  = Input(new LSURequest())
+    val mem_req_bits  = Input(new ULMRequest())
 
     val mem_resp_valid = Output(Bool())
     val mem_resp_ready = Input(Bool())
-    val mem_resp_bits  = Output(new LSUResponse())
+    val mem_resp_bits  = Output(new ULMResponse())
 
     // === TMA 接口 (块搬运) ===
     val tma_req = Flipped(Decoupled(new ULMRequest()))
     val tma_resp = Decoupled(new ULMResponse())
 
     // === TensorCore 接口 (WGMMA 盲读) ===
-    val tc_req = Flipped(Decoupled(new ULMRequest()))
-    val tc_resp = Decoupled(new ULMResponse())
+    val tc_req = Flipped(Decoupled(new PhysReq()))
+    val tc_resp = Decoupled(new PhysResp())
 
     // === CSR 配置接口 ===
     val cfg_bundle = Input(new ULMCfgBundle())
@@ -69,30 +69,6 @@ class ULM(implicit cfg: ULMConfig) extends Module {
   is_shared_addr := io.mem_req_bits.addr < io.cfg_bundle.smem_base
   is_global_addr := io.mem_req_bits.addr >= io.cfg_bundle.smem_base
 
-  // ── 将 LSURequest 转换为 ULMRequest ──
-  val lsu_to_ulm_req = Wire(new ULMRequest())
-  lsu_to_ulm_req.valid := io.mem_req_bits.valid
-  lsu_to_ulm_req.addr := io.mem_req_bits.addr
-  lsu_to_ulm_req.data := io.mem_req_bits.data
-  lsu_to_ulm_req.byte_mask := io.mem_req_bits.byte_mask
-  lsu_to_ulm_req.source_id := 0.U // LSU
-  lsu_to_ulm_req.warp_id := io.mem_req_bits.warp_id
-  lsu_to_ulm_req.rd_index := io.mem_req_bits.rd_index
-  lsu_to_ulm_req.active_mask := io.mem_req_bits.active_mask
-  lsu_to_ulm_req.barrier_id := io.mem_req_bits.barrier_id
-
-  // 根据 LSU op_type 设置 ULM req_type
-  lsu_to_ulm_req.req_type := MuxLookup(io.mem_req_bits.op_type, ULMReqType.L1D_READ)(
-    Seq(
-      LSUOpType.LDG  -> ULMReqType.L1D_READ,
-      LSUOpType.STG  -> ULMReqType.L1D_WRITE,
-      LSUOpType.LDS  -> ULMReqType.SMEM_READ,
-      LSUOpType.STS  -> ULMReqType.SMEM_WRITE,
-      LSUOpType.LDC  -> ULMReqType.L1D_READ,
-      LSUOpType.ATOM -> ULMReqType.L1D_READ
-    )
-  )
-
   // ── 内部模块例化 ──
   val l1d_ctrl = Module(new L1DController())
   val smem_ctrl = Module(new SmemController())
@@ -109,12 +85,12 @@ class ULM(implicit cfg: ULMConfig) extends Module {
   val route_to_smem = is_shared_addr && io.mem_req_bits.valid
 
   l1d_ctrl.io.in.valid := route_to_l1d
-  l1d_ctrl.io.in.bits := lsu_to_ulm_req
+  l1d_ctrl.io.in.bits := io.mem_req_bits
   l1d_ctrl.io.cfg_bundle := io.cfg_bundle
 
   // Smem Controller 连接 (LSU 请求)
   smem_ctrl.io.in.valid := route_to_smem
-  smem_ctrl.io.in.bits := lsu_to_ulm_req
+  smem_ctrl.io.in.bits := io.mem_req_bits
   smem_ctrl.io.cfg_bundle := io.cfg_bundle
 
   // TMA 请求直接连接到 Smem Controller
@@ -155,16 +131,7 @@ class ULM(implicit cfg: ULMConfig) extends Module {
   // 响应仲裁: L1D 和 Smem 不会同时有响应 (因为请求是互斥的)
   io.mem_resp_valid := l1d_out_valid || smem_out_valid
 
-  // 将 ULMResponse 转换为 LSUResponse
-  val ulm_resp = Mux(l1d_out_valid, l1d_out_bits, smem_out_bits)
-  io.mem_resp_bits.valid := ulm_resp.valid
-  io.mem_resp_bits.warp_id := ulm_resp.warp_id
-  io.mem_resp_bits.data := ulm_resp.data
-  io.mem_resp_bits.addr := Mux(l1d_out_valid, l1d_ctrl.io.in.bits.addr,
-                            Mux(smem_out_valid, smem_ctrl.io.in.bits.addr, 0.U))
-  io.mem_resp_bits.rd_index := ulm_resp.rd_index
-  io.mem_resp_bits.barrier_id := ulm_resp.barrier_id
-  io.mem_resp_bits.error := ulm_resp.error
+  io.mem_resp_bits := Mux(l1d_out_valid, l1d_out_bits, smem_out_bits)
 
   // 响应就绪信号
   l1d_ctrl.io.out.ready := io.mem_resp_ready && l1d_out_valid
@@ -175,14 +142,7 @@ class ULM(implicit cfg: ULMConfig) extends Module {
 
   // ── TensorCore 响应 ──
   io.tc_resp.valid := phys_arb.io.tc_resp.valid
-  io.tc_resp.bits.valid := phys_arb.io.tc_resp.bits.valid
-  io.tc_resp.bits.data := phys_arb.io.tc_resp.bits.data
-  io.tc_resp.bits.source_id := phys_arb.io.tc_resp.bits.source_id
-  io.tc_resp.bits.warp_id := 0.U
-  io.tc_resp.bits.rd_index := 0.U
-  io.tc_resp.bits.active_mask := 0.U
-  io.tc_resp.bits.barrier_id := 0.U
-  io.tc_resp.bits.error := false.B
+  io.tc_resp.bits := phys_arb.io.tc_resp.bits
 
   // ── L2 接口 (MSHR 未命中转发) ──
   // L1D Controller 的 MSHR 请求转发到 L2
